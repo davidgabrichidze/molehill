@@ -215,6 +215,12 @@ export component ConnectionCard inherits Rectangle {
                 font-size: 12px;
                 wrap: word-wrap;
             }
+            if root.item.prompt-fields.length == 0: Text {
+                text: "Nothing to type here. If the server asked you to approve the sign-in on your phone or in an app, do that first, then click Continue.";
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
             for f[i] in root.item.prompt-fields: VerticalLayout {
                 spacing: 4px;
                 FieldLabel { text: f.label; }
@@ -238,7 +244,11 @@ export component ConnectionCard inherits Rectangle {
                 alignment: end;
                 spacing: 8px;
                 Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
-                Btn { text: "Sign in"; kind: "primary"; clicked => { root.submit-form(); } }
+                Btn {
+                    text: root.item.prompt-fields.length == 0 ? "Continue" : "Sign in";
+                    kind: "primary";
+                    clicked => { root.submit-form(); }
+                }
             }
         }
 

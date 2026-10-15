@@ -66,7 +66,7 @@ const OC_FORM_OPT_IGNORE: c_uint = 0x0001;
 const OC_FORM_RESULT_OK: c_int = 0;
 const OC_FORM_RESULT_CANCELLED: c_int = 1;
 const OC_FORM_RESULT_NEWGROUP: c_int = 2;
-const PRG_INFO: c_int = 1;
+const PRG_DEBUG: c_int = 2;
 
 #[repr(C)]
 struct OcFormOpt {
@@ -186,6 +186,8 @@ struct Ctx {
     input: std::io::Lines<std::io::StdinLock<'static>>,
     /// Name of the password field the saved password went into.
     password_field: Option<String>,
+    /// `auth_id` of the form the saved password went into (usually "main").
+    password_form: Option<String>,
     rejected_reported: bool,
     auto_submits: u32,
     group_switched: bool,
@@ -317,11 +319,14 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         }
     }
 
-    // The visible fields.
+    let auth_id = cstr(form.auth_id).unwrap_or_default();
+    // Every field, for the log; then the ones the user can see.
+    let mut all = Vec::new();
     let mut opts = Vec::new();
     let mut p = form.opts;
     while !p.is_null() {
         let o = unsafe { &*p };
+        all.push(format!("{}:{}{}", cstr(o.name).unwrap_or_default(), o.kind, if o.flags != 0 { format!("/{:#x}", o.flags) } else { String::new() }));
         if o.flags & OC_FORM_OPT_IGNORE == 0 && matches!(o.kind, OC_FORM_OPT_TEXT | OC_FORM_OPT_PASSWORD | OC_FORM_OPT_SELECT | OC_FORM_OPT_TOKEN) {
             opts.push(p);
         }
@@ -340,11 +345,11 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         })
         .collect();
 
-    // The same password form coming back with an error means the saved
-    // password was wrong. Other errors (a challenge, a bad OTP) don't.
-    if let Some(filled) = &ctx.password_field {
-        let same_form = infos.iter().any(|f| f.kind == FieldKind::Password && &f.name == filled);
-        if error.is_some() && same_form && !ctx.rejected_reported {
+    // The same login form (by auth_id) coming back with an error means the
+    // saved password was wrong. A challenge (auth_id "challenge", whose answer
+    // field libopenconnect also calls "password") with an error doesn't.
+    if let Some(filled) = &ctx.password_form {
+        if error.is_some() && *filled == auth_id && !ctx.rejected_reported {
             ctx.rejected_reported = true;
             emit(&HelperEvent::PasswordRejected);
         }
@@ -363,12 +368,18 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     }
     if plan.password_field.is_some() {
         ctx.password_field = plan.password_field.clone();
+        ctx.password_form = Some(auth_id.clone());
     }
     emit(&HelperEvent::Log {
         line: format!(
-            "Server form: {} field(s) [{}]{}",
+            "Server form \"{}\" ({} {}): {} visible field(s) [{}], all fields [{}]{}{}",
+            auth_id,
+            cstr(form.method).unwrap_or_default(),
+            cstr(form.action).unwrap_or_default(),
             infos.len(),
             infos.iter().map(|f| format!("{}:{:?}", f.name, f.kind)).collect::<Vec<_>>().join(", "),
+            all.join(", "),
+            cstr(form.message).map(|m| format!(", message: {m}")).unwrap_or_default(),
             if plan.auto_submit { ", filled in automatically" } else { ", asking you" }
         ),
     });
@@ -465,12 +476,17 @@ unsafe extern "C" fn on_browser(_: Vpn, uri: *const c_char, _: *mut c_void) -> c
 }
 
 unsafe extern "C" fn on_progress(privdata: *mut c_void, level: c_int, fmt: *const c_char, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) {
-    if level > PRG_INFO || fmt.is_null() {
+    // Debug output too (it explains odd server forms), minus anything secret.
+    if level > PRG_DEBUG || fmt.is_null() {
         return;
     }
     let line = format_c(unsafe { CStr::from_ptr(fmt) }.to_bytes(), &[a1, a2, a3, a4, a5, a6]);
     let line = line.trim_end().to_string();
     if line.is_empty() {
+        return;
+    }
+    let lower = line.to_ascii_lowercase();
+    if level == PRG_DEBUG && ["cookie", "password", "passwd", "secret", "token", "session"].iter().any(|w| lower.contains(w)) {
         return;
     }
     if level == 0 {
@@ -551,6 +567,7 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
         vpn: std::ptr::null_mut(),
         input,
         password_field: None,
+        password_form: None,
         rejected_reported: false,
         auto_submits: 0,
         group_switched: false,

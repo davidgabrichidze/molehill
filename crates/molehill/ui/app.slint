@@ -51,10 +51,9 @@ export component AppWindow inherits Window {
     icon: root.app-icon;
     background: Theme.bg;
     default-font-family: "Segoe UI Variable Text";
-    preferred-width: 440px;
-    preferred-height: 660px;
-    min-width: 380px;
-    min-height: 480px;
+    // Fixed size (close and minimize only); see platform.rs for why it matters.
+    width: 440px;
+    height: 660px;
 
     in property <image> app-icon;
     in-out property <Page> page: Page.list;

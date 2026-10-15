@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
-use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
+use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL, DwmSetWindowAttribute,
@@ -15,11 +15,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumThreadWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetClientRect, GetWindowLongW,
+    EnumThreadWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetWindowLongW,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDPISCALEDSIZE, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
     GetWindowTextW, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
-    SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_DPICHANGED, WM_GETMINMAXINFO, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -93,6 +93,14 @@ pub fn style_main(hwnd: HWND) {
         dwm(hwnd, DWMWA_BORDER_COLOR, 0x004d332f);
         dwm(hwnd, DWMWA_TEXT_COLOR, 0x00f5cac0);
         let _ = SetWindowSubclass(hwnd, Some(main_proc), 1, 0);
+        // Close and minimize only: winit owns the window styles, so ask it.
+        crate::with_app(|app| {
+            use slint::winit_030::{WinitWindowAccessor, winit::window::WindowButtons};
+            slint::ComponentHandle::window(&app.ui).with_winit_window(|w| {
+                w.set_resizable(false);
+                w.set_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE);
+            });
+        });
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
     }
@@ -160,33 +168,60 @@ pub fn claim_single_instance() -> bool {
     }
 }
 
+/// The main window's fixed client size in logical pixels (see ui/app.slint).
+const LOGICAL_SIZE: (f64, f64) = (440.0, 660.0);
 
-/// Keeps the window's size right when it's dragged between monitors with
-/// different scaling.
+thread_local! {
+    static APPLYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Outer window size for the fixed logical client size at `dpi`.
+fn outer_size(hwnd: HWND, dpi: u32) -> Option<(i32, i32)> {
+    let k = dpi as f64 / 96.0;
+    let mut rect = RECT { left: 0, top: 0, right: (LOGICAL_SIZE.0 * k).round() as i32, bottom: (LOGICAL_SIZE.1 * k).round() as i32 };
+    unsafe {
+        let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
+        let ex_style = WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32);
+        AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, dpi).ok()?;
+    }
+    Some((rect.right - rect.left, rect.bottom - rect.top))
+}
+
+/// Moves between monitors with different scaling the way Microsoft documents
+/// it, instead of winit's way.
 ///
-/// While the window straddles two monitors, the scale can flip back and forth
-/// inside a single drag step. Windows' move loop then asks for the size at a
-/// DPI the window already has (WM_GETDPISCALEDSIZE), and winit leaves that to
-/// the default handler, which scales the current size again: the window grew
-/// 25% per crossing. Answering from the window's *actual* DPI keeps it at the
-/// same logical size, however often Windows asks.
+/// winit's WM_DPICHANGED handler picks its own position (it keeps the cursor
+/// ratio, then nudges the window pixel by pixel onto the new monitor). Inside a
+/// drag that fights Windows' move loop: the scale flips back and forth, the
+/// window grows, sticks on the edge and the cursor jumps. So winit never sees
+/// the message: Slint is told the new scale directly, and the window goes
+/// exactly where Windows suggests, at the size answered for WM_GETDPISCALEDSIZE.
 unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
-    if msg == WM_GETDPISCALEDSIZE {
-        unsafe {
-            let new_dpi = wp.0 as u32;
-            let current_dpi = GetDpiForWindow(hwnd);
-            let mut client = RECT::default();
-            if new_dpi != 0 && current_dpi != 0 && GetClientRect(hwnd, &mut client).is_ok() {
-                let scale = |px: i32| ((px as f64) * new_dpi as f64 / current_dpi as f64).round() as i32;
-                let mut rect = RECT { left: 0, top: 0, right: scale(client.right - client.left), bottom: scale(client.bottom - client.top) };
-                let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
-                let ex_style = WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32);
-                if AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, new_dpi).is_ok() {
-                    *(lp.0 as *mut SIZE) = SIZE { cx: rect.right - rect.left, cy: rect.bottom - rect.top };
-                    return LRESULT(1);
-                }
+    match msg {
+        WM_GETDPISCALEDSIZE => {
+            if let Some((w, h)) = outer_size(hwnd, wp.0 as u32) {
+                unsafe { *(lp.0 as *mut SIZE) = SIZE { cx: w, cy: h } };
+                return LRESULT(1);
             }
         }
+        // winit still holds min/max limits in pixels for the old scale until
+        // Slint's next frame; don't let them clamp the new size.
+        WM_GETMINMAXINFO if APPLYING.get() => return LRESULT(0),
+        WM_DPICHANGED => {
+            let dpi = (wp.0 & 0xffff) as u32;
+            let r = unsafe { *(lp.0 as *const RECT) };
+            crate::with_app(|app| {
+                let window = slint::ComponentHandle::window(&app.ui);
+                let _ = window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: dpi as f32 / 96.0 });
+            });
+            APPLYING.set(true);
+            unsafe {
+                let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            APPLYING.set(false);
+            return LRESULT(0);
+        }
+        _ => {}
     }
     unsafe { DefSubclassProc(hwnd, msg, wp, lp) }
 }
