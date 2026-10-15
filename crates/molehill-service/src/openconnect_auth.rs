@@ -61,6 +61,7 @@ pub enum HelperAnswer {
 const OC_FORM_OPT_TEXT: c_int = 1;
 const OC_FORM_OPT_PASSWORD: c_int = 2;
 const OC_FORM_OPT_SELECT: c_int = 3;
+const OC_FORM_OPT_TOKEN: c_int = 5;
 const OC_FORM_OPT_IGNORE: c_uint = 0x0001;
 const OC_FORM_RESULT_OK: c_int = 0;
 const OC_FORM_RESULT_CANCELLED: c_int = 1;
@@ -183,7 +184,8 @@ struct Ctx {
     req: AuthRequest,
     vpn: Vpn,
     input: std::io::Lines<std::io::StdinLock<'static>>,
-    password_filled: bool,
+    /// Name of the password field the saved password went into.
+    password_field: Option<String>,
     rejected_reported: bool,
     auto_submits: u32,
     group_switched: bool,
@@ -231,19 +233,77 @@ fn select_choices(sel: *mut OcFormOptSelect) -> Vec<(String, String)> {
         .collect()
 }
 
-fn looks_like_username(name: &str, label: &str) -> bool {
-    let n = format!("{name} {label}").to_ascii_lowercase();
-    n.contains("user") || n.contains("login") || n.contains("email")
+/// A username field, judged by its *name* only: labels like "Code sent to
+/// user X" must not get the username.
+pub fn is_username_field(name: &str) -> bool {
+    matches!(name.trim().to_ascii_lowercase().as_str(), "username" | "user" | "user_name" | "uname" | "login" | "email")
+}
+
+/// One visible field of a server form, as the auto-fill logic sees it.
+#[derive(Debug, Clone)]
+pub struct FieldInfo {
+    pub name: String,
+    pub kind: FieldKind,
+    /// What the server put in already.
+    pub current: String,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct FillPlan {
+    /// (field index, value) to set.
+    pub fills: Vec<(usize, String)>,
+    /// Name of the password field that gets the saved password, if any.
+    pub password_field: Option<String>,
+    /// Submit without showing the form.
+    pub auto_submit: bool,
+}
+
+/// Decides what to fill in a server login form and whether to submit it
+/// without asking. The saved password goes into one password field, once;
+/// anything else (OTP, second password, a challenge, a message-only or
+/// select-only form) is shown to the user.
+pub fn plan_form(
+    fields: &[FieldInfo],
+    has_error: bool,
+    username: Option<&str>,
+    password: Option<&str>,
+    password_used: bool,
+    auto_submits: u32,
+) -> FillPlan {
+    let mut plan = FillPlan::default();
+    let mut complete = true;
+    for (i, f) in fields.iter().enumerate() {
+        match f.kind {
+            FieldKind::Text => {
+                if !f.current.is_empty() {
+                    continue;
+                }
+                match username.filter(|u| !u.is_empty() && is_username_field(&f.name)) {
+                    Some(u) => plan.fills.push((i, u.to_string())),
+                    None => complete = false,
+                }
+            }
+            FieldKind::Password => {
+                let usable = !password_used && !has_error && plan.password_field.is_none();
+                match password.filter(|p| usable && !p.is_empty()) {
+                    Some(p) => {
+                        plan.fills.push((i, p.to_string()));
+                        plan.password_field = Some(f.name.clone());
+                    }
+                    None => complete = false,
+                }
+            }
+            FieldKind::Select => {}
+        }
+    }
+    plan.auto_submit = !plan.fills.is_empty() && complete && !has_error && auto_submits < 3;
+    plan
 }
 
 unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_int {
     let ctx = unsafe { &mut *(privdata as *mut Ctx) };
     let form = unsafe { &mut *form };
     let error = cstr(form.error);
-    if error.is_some() && ctx.password_filled && !ctx.rejected_reported {
-        ctx.rejected_reported = true;
-        emit(&HelperEvent::PasswordRejected);
-    }
 
     // Pick the saved group first; the server sends a fresh form for it.
     if let Some(group) = ctx.req.group.clone().filter(|_| !form.authgroup_opt.is_null() && !ctx.group_switched) {
@@ -257,73 +317,106 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         }
     }
 
+    // The visible fields.
     let mut opts = Vec::new();
     let mut p = form.opts;
     while !p.is_null() {
-        opts.push(p);
-        p = unsafe { (*p).next };
-    }
-
-    let mut fields = Vec::new();
-    let mut complete = true;
-    for &op in &opts {
-        let o = unsafe { &*op };
-        if o.flags & OC_FORM_OPT_IGNORE != 0 || !matches!(o.kind, OC_FORM_OPT_TEXT | OC_FORM_OPT_PASSWORD | OC_FORM_OPT_SELECT) {
-            continue;
+        let o = unsafe { &*p };
+        if o.flags & OC_FORM_OPT_IGNORE == 0 && matches!(o.kind, OC_FORM_OPT_TEXT | OC_FORM_OPT_PASSWORD | OC_FORM_OPT_SELECT | OC_FORM_OPT_TOKEN) {
+            opts.push(p);
         }
-        let name = cstr(o.name).unwrap_or_default();
-        let label = cstr(o.label).unwrap_or_else(|| name.clone());
-        let current = cstr(o.value).unwrap_or_default();
-        match o.kind {
-            OC_FORM_OPT_TEXT => {
-                let mut value = current;
-                if value.is_empty() && looks_like_username(&name, &label) {
-                    if let Some(u) = ctx.req.username.clone() {
-                        ctx.set(op, &u);
-                        value = u;
-                    }
-                }
-                complete &= !value.is_empty();
-                fields.push(FormField { name, label, kind: FieldKind::Text, value, options: vec![] });
-            }
-            OC_FORM_OPT_PASSWORD => {
-                // The saved password goes into the first password field once;
-                // anything after that (OTP, a retry) is for the user.
-                match ctx.req.password.clone().filter(|_| !ctx.password_filled && error.is_none()) {
-                    Some(pw) => {
-                        ctx.set(op, &pw);
-                        ctx.password_filled = true;
-                    }
-                    None => complete = false,
-                }
-                fields.push(FormField { name, label, kind: FieldKind::Password, value: String::new(), options: vec![] });
-            }
-            _ => {
-                let options = select_choices(op as *mut OcFormOptSelect);
-                let value = if current.is_empty() { options.first().map(|o| o.0.clone()).unwrap_or_default() } else { current };
-                fields.push(FormField { name, label, kind: FieldKind::Select, value, options });
-            }
+        p = o.next;
+    }
+    let infos: Vec<FieldInfo> = opts
+        .iter()
+        .map(|&op| {
+            let o = unsafe { &*op };
+            let kind = match o.kind {
+                OC_FORM_OPT_TEXT => FieldKind::Text,
+                OC_FORM_OPT_SELECT => FieldKind::Select,
+                _ => FieldKind::Password,
+            };
+            FieldInfo { name: cstr(o.name).unwrap_or_default(), kind, current: cstr(o.value).unwrap_or_default() }
+        })
+        .collect();
+
+    // The same password form coming back with an error means the saved
+    // password was wrong. Other errors (a challenge, a bad OTP) don't.
+    if let Some(filled) = &ctx.password_field {
+        let same_form = infos.iter().any(|f| f.kind == FieldKind::Password && &f.name == filled);
+        if error.is_some() && same_form && !ctx.rejected_reported {
+            ctx.rejected_reported = true;
+            emit(&HelperEvent::PasswordRejected);
         }
     }
 
-    if complete && error.is_none() && ctx.auto_submits < 3 {
+    let plan = plan_form(
+        &infos,
+        error.is_some(),
+        ctx.req.username.as_deref(),
+        ctx.req.password.as_deref(),
+        ctx.password_field.is_some(),
+        ctx.auto_submits,
+    );
+    for (i, value) in &plan.fills {
+        ctx.set(opts[*i], value);
+    }
+    if plan.password_field.is_some() {
+        ctx.password_field = plan.password_field.clone();
+    }
+    emit(&HelperEvent::Log {
+        line: format!(
+            "Server form: {} field(s) [{}]{}",
+            infos.len(),
+            infos.iter().map(|f| format!("{}:{:?}", f.name, f.kind)).collect::<Vec<_>>().join(", "),
+            if plan.auto_submit { ", filled in automatically" } else { ", asking you" }
+        ),
+    });
+    if plan.auto_submit {
         ctx.auto_submits += 1;
         return OC_FORM_RESULT_OK;
     }
 
+    let filled: Vec<usize> = plan.fills.iter().map(|(i, _)| *i).collect();
+    let fields: Vec<FormField> = opts
+        .iter()
+        .enumerate()
+        .map(|(i, &op)| {
+            let o = unsafe { &*op };
+            let name = infos[i].name.clone();
+            let label = cstr(o.label).unwrap_or_else(|| name.clone());
+            let prefilled = filled.contains(&i);
+            match infos[i].kind {
+                FieldKind::Select => {
+                    let options = select_choices(op as *mut OcFormOptSelect);
+                    let current = cstr(o.value).unwrap_or_default();
+                    let value = if current.is_empty() { options.first().map(|o| o.0.clone()).unwrap_or_default() } else { current };
+                    FormField { name, label, kind: FieldKind::Select, value, options, prefilled }
+                }
+                // Never send a password back to the app, only that one is filled.
+                FieldKind::Password => FormField { name, label, kind: FieldKind::Password, value: String::new(), options: vec![], prefilled },
+                FieldKind::Text => FormField { name, label, kind: FieldKind::Text, value: cstr(o.value).unwrap_or_default(), options: vec![], prefilled },
+            }
+        })
+        .collect();
     let banner = [cstr(form.banner), cstr(form.message)].into_iter().flatten().collect::<Vec<_>>().join("\n");
     emit(&HelperEvent::Form { banner: (!banner.is_empty()).then_some(banner), error, fields });
+
     match ctx.answer() {
         HelperAnswer::Form { values } => {
             let group_name = (!form.authgroup_opt.is_null()).then(|| cstr(unsafe { (*form.authgroup_opt).form.name })).flatten();
-            for &op in &opts {
-                let name = cstr(unsafe { (*op).name }).unwrap_or_default();
-                let Some((_, value)) = values.iter().find(|(n, _)| *n == name) else { continue };
+            for (i, &op) in opts.iter().enumerate() {
+                let name = &infos[i].name;
+                let Some((_, value)) = values.iter().find(|(n, _)| n == name) else { continue };
+                // An empty box must not wipe what Molehill filled in.
+                if value.is_empty() && filled.contains(&i) {
+                    continue;
+                }
                 // A different group means a different form: ask the server for it.
                 if group_name.as_deref() == Some(name.as_str()) {
                     let choices = select_choices(form.authgroup_opt);
-                    if let Some(i) = choices.iter().position(|(n, _)| n == value) {
-                        if i as c_int != form.authgroup_selection {
+                    if let Some(c) = choices.iter().position(|(n, _)| n == value) {
+                        if c as c_int != form.authgroup_selection {
                             ctx.set(op, value);
                             return OC_FORM_RESULT_NEWGROUP;
                         }
@@ -457,7 +550,7 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
         req,
         vpn: std::ptr::null_mut(),
         input,
-        password_filled: false,
+        password_field: None,
         rejected_reported: false,
         auto_submits: 0,
         group_switched: false,
@@ -513,6 +606,55 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn f(name: &str, kind: FieldKind) -> FieldInfo {
+        FieldInfo { name: name.into(), kind, current: String::new() }
+    }
+
+    fn plan(fields: &[FieldInfo], error: bool, password_used: bool) -> FillPlan {
+        plan_form(fields, error, Some("shota"), Some("s3cret"), password_used, 0)
+    }
+
+    #[test]
+    fn fills_and_submits_a_plain_login() {
+        let p = plan(&[f("group_list", FieldKind::Select), f("username", FieldKind::Text), f("password", FieldKind::Password)], false, false);
+        assert!(p.auto_submit);
+        assert_eq!(p.fills, vec![(1, "shota".into()), (2, "s3cret".into())]);
+        assert_eq!(p.password_field.as_deref(), Some("password"));
+    }
+
+    #[test]
+    fn asks_for_a_second_password_in_the_same_form() {
+        let p = plan(&[f("username", FieldKind::Text), f("password", FieldKind::Password), f("secondary_password", FieldKind::Password)], false, false);
+        assert!(!p.auto_submit, "the OTP field must be shown");
+        assert_eq!(p.fills.len(), 2);
+    }
+
+    #[test]
+    fn shows_challenge_forms_after_the_password() {
+        // A follow-up form with only a password-type answer field.
+        let p = plan(&[f("answer", FieldKind::Password)], false, true);
+        assert!(!p.auto_submit);
+        assert!(p.fills.is_empty());
+        // Message-only and select-only forms are shown too, never skipped.
+        assert!(!plan(&[], false, true).auto_submit);
+        assert!(!plan(&[f("method", FieldKind::Select)], false, true).auto_submit);
+    }
+
+    #[test]
+    fn username_goes_only_into_username_fields() {
+        // An OTP field named "answer" whose label mentions the user stays empty.
+        let p = plan(&[f("answer", FieldKind::Text)], false, true);
+        assert!(p.fills.is_empty() && !p.auto_submit);
+        assert!(is_username_field("Username") && !is_username_field("user_code_sent"));
+    }
+
+    #[test]
+    fn never_reuses_the_password_after_an_error() {
+        let p = plan(&[f("username", FieldKind::Text), f("password", FieldKind::Password)], true, false);
+        assert!(!p.auto_submit);
+        assert!(p.fills.iter().all(|(i, _)| *i == 0));
+    }
 
     #[test]
     fn formats_progress_messages() {

@@ -4,7 +4,8 @@
 use std::time::Duration;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL, DwmSetWindowAttribute,
@@ -14,11 +15,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumThreadWindows, FindWindowW, GWL_EXSTYLE, GetClassNameW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+    EnumThreadWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetClientRect, GetWindowLongW,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDPISCALEDSIZE, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
     GetWindowTextW, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
-    SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE,
-    WM_DPICHANGED, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -76,7 +77,7 @@ fn dwm(hwnd: HWND, attr: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE, valu
 }
 
 /// Main window: icon, title bar in the theme colors (COLORREF is 0x00BBGGRR),
-/// DPI fix, then to the front.
+/// then to the front.
 pub fn style_main(hwnd: HWND) {
     unsafe {
         // The icon embedded by build.rs (resource id 1), for title bar and taskbar.
@@ -95,26 +96,6 @@ pub fn style_main(hwnd: HWND) {
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
     }
-}
-
-/// When the window moves to a monitor with a different scale, Windows
-/// suggests a new size that keeps it the same visual size. Enforce that one,
-/// also after the UI toolkit has finished its own resizing.
-unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
-    let result = unsafe { DefSubclassProc(hwnd, msg, wp, lp) };
-    if msg == WM_DPICHANGED {
-        let rect = unsafe { *(lp.0 as *const RECT) };
-        let (w, h, raw) = (rect.right - rect.left, rect.bottom - rect.top, hwnd.0 as isize);
-        let apply = move || unsafe {
-            let _ = SetWindowPos(HWND(raw as *mut _), None, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-        };
-        apply();
-        let _ = slint::invoke_from_event_loop(move || {
-            apply();
-            slint::Timer::single_shot(Duration::from_millis(150), apply);
-        });
-    }
-    result
 }
 
 /// Tray popup: no taskbar button, small rounded corners, themed border, and
@@ -177,4 +158,35 @@ pub fn claim_single_instance() -> bool {
         }
         false
     }
+}
+
+
+/// Keeps the window's size right when it's dragged between monitors with
+/// different scaling.
+///
+/// While the window straddles two monitors, the scale can flip back and forth
+/// inside a single drag step. Windows' move loop then asks for the size at a
+/// DPI the window already has (WM_GETDPISCALEDSIZE), and winit leaves that to
+/// the default handler, which scales the current size again: the window grew
+/// 25% per crossing. Answering from the window's *actual* DPI keeps it at the
+/// same logical size, however often Windows asks.
+unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    if msg == WM_GETDPISCALEDSIZE {
+        unsafe {
+            let new_dpi = wp.0 as u32;
+            let current_dpi = GetDpiForWindow(hwnd);
+            let mut client = RECT::default();
+            if new_dpi != 0 && current_dpi != 0 && GetClientRect(hwnd, &mut client).is_ok() {
+                let scale = |px: i32| ((px as f64) * new_dpi as f64 / current_dpi as f64).round() as i32;
+                let mut rect = RECT { left: 0, top: 0, right: scale(client.right - client.left), bottom: scale(client.bottom - client.top) };
+                let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
+                let ex_style = WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32);
+                if AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, new_dpi).is_ok() {
+                    *(lp.0 as *mut SIZE) = SIZE { cx: rect.right - rect.left, cy: rect.bottom - rect.top };
+                    return LRESULT(1);
+                }
+            }
+        }
+    }
+    unsafe { DefSubclassProc(hwnd, msg, wp, lp) }
 }

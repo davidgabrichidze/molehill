@@ -96,6 +96,7 @@ fn main() {
         options: opts(&[]),
         selected: 0,
         focus: false,
+        prefilled: false,
     };
     let mut form = item("d", "Acme Cisco", "busy", "Waiting for you");
     form.tag = "CISCO".into();

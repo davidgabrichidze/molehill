@@ -506,11 +506,11 @@ impl App {
                     FieldKind::Select => f.options.get(row.selected.max(0) as usize).map(|o| o.0.clone()).unwrap_or_default(),
                     _ => row.value.to_string(),
                 };
-                if f.kind == FieldKind::Text && user.is_none() && looks_like_username(&f.name, &f.label) {
+                if f.kind == FieldKind::Text && user.is_none() && looks_like_username(&f.name) {
                     user = Some(value.clone());
                 }
                 let lname = format!("{} {}", f.name, f.label).to_ascii_lowercase();
-                if f.kind == FieldKind::Password && pass.is_none() && lname.contains("pass") {
+                if f.kind == FieldKind::Password && pass.is_none() && lname.contains("pass") && !value.is_empty() {
                     pass = Some(value.clone());
                 }
                 values.push((f.name.clone(), value));
@@ -1160,9 +1160,9 @@ fn duration(secs: u64) -> String {
     if h > 0 { format!("{h}h {m:02}m") } else { format!("{m}m {s:02}s") }
 }
 
-fn looks_like_username(name: &str, label: &str) -> bool {
-    let n = format!("{name} {label}").to_ascii_lowercase();
-    n.contains("user") || n.contains("login") || n.contains("email")
+/// A username field, by its name only (see the service's auto-fill rules).
+fn looks_like_username(name: &str) -> bool {
+    matches!(name.trim().to_ascii_lowercase().as_str(), "username" | "user" | "user_name" | "uname" | "login" | "email")
 }
 
 /// The card's editable copy of a server login form.
@@ -1177,11 +1177,11 @@ fn form_model(fields: &[FormField], username: Option<&str>) -> Rc<VecModel<FormF
                 FieldKind::Select => ("select", labels.get(selected).cloned().unwrap_or_default().to_string()),
                 FieldKind::Password => ("password", String::new()),
                 FieldKind::Text => {
-                    let fill = username.filter(|_| f.value.is_empty() && looks_like_username(&f.name, &f.label));
+                    let fill = username.filter(|_| f.value.is_empty() && looks_like_username(&f.name));
                     ("text", fill.map(str::to_string).unwrap_or_else(|| f.value.clone()))
                 }
             };
-            let focus = !focused && kind != "select" && value.is_empty();
+            let focus = !focused && kind != "select" && value.is_empty() && !f.prefilled;
             focused |= focus;
             FormFieldItem {
                 name: f.name.clone().into(),
@@ -1191,6 +1191,7 @@ fn form_model(fields: &[FormField], username: Option<&str>) -> Rc<VecModel<FormF
                 options: ModelRc::new(VecModel::from(labels)),
                 selected: selected as i32,
                 focus,
+                prefilled: f.prefilled,
             }
         })
         .collect();

@@ -111,6 +111,7 @@ fn latest_openvpn() -> Result<Release> {
     Ok(Release { version: latest, msi_url })
 }
 
+/// Installed versions (local, fast) and latest versions (online).
 pub fn query() -> Vec<ComponentInfo> {
     let latest = match latest_openvpn() {
         Ok(r) => Some(r.version),
@@ -126,6 +127,17 @@ pub fn query() -> Vec<ComponentInfo> {
             None
         }
     };
+    describe(latest, openconnect_latest)
+}
+
+/// Re-detects what's installed without going online; latest versions come
+/// from the previous check.
+pub fn query_local(previous: &[ComponentInfo]) -> Vec<ComponentInfo> {
+    let latest = |id: &str| previous.iter().find(|c| c.id == id).and_then(|c| c.latest.clone());
+    describe(latest(OPENVPN), latest(OPENCONNECT))
+}
+
+fn describe(latest: Option<String>, openconnect_latest: Option<String>) -> Vec<ComponentInfo> {
     vec![
         ComponentInfo {
             id: OPENVPN.into(),

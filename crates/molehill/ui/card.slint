@@ -11,6 +11,8 @@ export struct FormFieldItem {
     options: [string],
     selected: int,
     focus: bool,
+    // Already filled by Molehill (the saved password); empty keeps it.
+    prefilled: bool,
 }
 
 export struct ConnectionItem {
@@ -224,6 +226,7 @@ export component ConnectionCard inherits Rectangle {
                 if f.kind != "select": LineEdit {
                     text: f.value;
                     input-type: f.kind == "password" ? InputType.password : InputType.text;
+                    placeholder-text: f.prefilled ? "Saved. Leave empty to use it" : "";
                     edited(t) => { root.field-edited(i, t); }
                     accepted => { root.submit-form(); }
                     init => {

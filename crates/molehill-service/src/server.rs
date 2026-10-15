@@ -160,7 +160,17 @@ impl Manager {
             })
             .await
             .unwrap_or_else(|e| Err(anyhow::anyhow!("installer task crashed: {e}")));
-            mgr.inner.lock().unwrap().installing = false;
+            // Report what's installed now right away (local check, instant), so the
+            // app never shows "not installed" after a successful install, then
+            // refresh the latest versions online in the background.
+            let previous = mgr.inner.lock().unwrap().components.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
+            let local = tokio::task::spawn_blocking(move || components::query_local(&previous)).await.unwrap_or_default();
+            {
+                let mut inner = mgr.inner.lock().unwrap();
+                inner.components = Some((Instant::now(), local.clone()));
+                inner.installing = false;
+            }
+            mgr.emit(Event::Components { items: local });
             let (message, error) = match result {
                 Ok(msg) => (msg, None),
                 Err(e) => (String::new(), Some(format!("{e:#}"))),

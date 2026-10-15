@@ -162,4 +162,8 @@ pub struct FormField {
     /// (name, label) of each choice, for selects.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<(String, String)>,
+    /// Molehill already filled this in (e.g. the saved password); leaving it
+    /// empty keeps that value.
+    #[serde(default)]
+    pub prefilled: bool,
 }
