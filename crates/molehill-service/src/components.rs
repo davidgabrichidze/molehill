@@ -186,7 +186,7 @@ fn install_openvpn(progress: &impl Fn(&str)) -> Result<String> {
 
     progress(&format!("Installing OpenVPN {}…", release.version));
     let log = dir.join("openvpn-install.log");
-    let mut cmd = Command::new("msiexec.exe");
+    let mut cmd = Command::new(crate::security::system32("msiexec.exe"));
     cmd.arg("/i").arg(&file).args(["/qn", "/norestart", "/l*v"]).arg(&log);
     // Fresh installs get only what Molehill needs. Upgrades keep whatever
     // features an existing installation already had.
@@ -237,7 +237,7 @@ fn verify_signature(file: &PathBuf) -> Result<()> {
          if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=OpenVPN Inc\\.') {{ exit 1 }}",
         file.display().to_string().replace('\'', "''")
     );
-    let ok = Command::new("powershell.exe")
+    let ok = Command::new(crate::security::system32(r"WindowsPowerShell\v1.0\powershell.exe"))
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(CREATE_NO_WINDOW)
         .status()?
@@ -308,7 +308,7 @@ fn install_openconnect(progress: &impl Fn(&str)) -> Result<String> {
 
     progress("Unpacking…");
     let installer_name = format!("openconnect-installer-MinGW64-GnuTLS-v{latest}.exe");
-    let status = Command::new(r"C:\Windows\System32\tar.exe")
+    let status = Command::new(crate::security::system32("tar.exe"))
         .arg("-xf")
         .arg(&zip)
         .arg("-C")

@@ -63,7 +63,10 @@ fn init_logging(console: bool) {
         return;
     }
     let dir = paths::service_dir().join("logs");
-    let _ = std::fs::create_dir_all(&dir);
+    if security::readable_dir(&dir).is_err() {
+        builder.with_writer(std::io::sink).init();
+        return;
+    }
     let path = dir.join("service.log");
     // Keep one previous log around instead of growing forever.
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > 5 * 1024 * 1024) {

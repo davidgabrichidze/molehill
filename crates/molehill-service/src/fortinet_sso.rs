@@ -65,12 +65,23 @@ fn answer_browser(stream: TcpStream) -> Option<String> {
     let mut reader = BufReader::new(stream);
     let mut request = String::new();
     reader.read_line(&mut request).ok()?;
-    // Drain the headers so the browser doesn't see a reset.
+    // Drain the headers so the browser doesn't see a reset. Only a request
+    // addressed to loopback counts (not one a web page aimed here through a
+    // name that resolves to 127.0.0.1).
+    let mut loopback_host = false;
     let mut line = String::new();
     while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+        if let Some(host) = line.split_once(':').filter(|(n, _)| n.trim().eq_ignore_ascii_case("host")).map(|(_, v)| v.trim()) {
+            loopback_host = host == format!("127.0.0.1:{PORT}") || host == format!("localhost:{PORT}");
+        }
         line.clear();
     }
-    let id = request.split_whitespace().nth(1).and_then(|target| query_param(target, "id")).filter(|id| !id.is_empty());
+    let id = request
+        .split_whitespace()
+        .nth(1)
+        .filter(|_| loopback_host)
+        .and_then(|target| query_param(target, "id"))
+        .filter(|id| !id.is_empty());
     let (status, body) = if id.is_some() { ("200 OK", PAGE) } else { ("404 Not Found", "") };
     let mut stream = reader.into_inner();
     let _ = write!(
@@ -93,7 +104,7 @@ fn trade(base: &str, pin: &str, id: &str) -> Result<String> {
 pub(crate) fn pinned_curl(pin: &str, args: &[&str]) -> Result<String> {
     use std::os::windows::process::CommandExt;
     let spki = pin.strip_prefix("pin-sha256:").ok_or_else(|| anyhow!("unexpected certificate pin {pin}"))?;
-    let curl = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into()).join("System32\\curl.exe");
+    let curl = crate::security::system32("curl.exe");
     // -k: trust comes from the pin, which is stricter than the CA check.
     let out = Command::new(curl)
         .args(["-sS", "-k", "--max-time", "20"])

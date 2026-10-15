@@ -98,6 +98,8 @@ fn main() -> anyhow::Result<()> {
     if !platform::claim_single_instance() {
         return Ok(());
     }
+    // A crash during a GlobalProtect sign-in leaves the handler registered.
+    gpcallback::unregister();
     let start_hidden = std::env::args().any(|a| a == "--hidden");
 
     let ui = AppWindow::new()?;

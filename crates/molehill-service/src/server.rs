@@ -66,6 +66,13 @@ impl Manager {
     }
 
     fn connect(self: &Arc<Self>, id: String, name: String, spec: TunnelSpec) {
+        // The id names files under the service's run directory and the
+        // network adapter: anyone on the machine can reach the pipe, so it
+        // must not carry a path.
+        if !valid_id(&id) {
+            self.emit(Event::Error { message: "Rejected a connection with a malformed id.".into() });
+            return;
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         {
             let mut inner = self.inner.lock().unwrap();
@@ -309,4 +316,20 @@ async fn handle_client(pipe: NamedPipeServer, mgr: Arc<Manager>) {
 /// Helper for tunnel implementations.
 pub fn status(id: &str, name: &str, state: TunnelState, detail: impl Into<String>) -> TunnelStatus {
     TunnelStatus { id: id.into(), name: name.into(), state, detail: detail.into(), local_ip: None, since_unix: None }
+}
+
+/// Profile ids are UUIDs (`profile::new_id`); nothing else is accepted.
+fn valid_id(id: &str) -> bool {
+    (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ids_cannot_carry_paths() {
+        assert!(super::valid_id(&molehill_core::profile::new_id()));
+        for bad in ["", r"..x", r"C:Windowsx", "a/b", "a b", "ß", &"a".repeat(65)] {
+            assert!(!super::valid_id(bad), "{bad}");
+        }
+    }
 }

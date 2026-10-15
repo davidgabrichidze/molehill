@@ -31,6 +31,7 @@ const BLOCKED: &[&str] = &[
     "status", "writepid", "cd", "chroot", "daemon", "config", "replay-persist", "tmp-dir", "service",
     "engine", "providers", "pkcs11-providers", "capath", "iproute", "tls-export-cert", "auth-gen-token-secret",
     "ifconfig-pool-persist", "client-config-dir", "ccd-exclusive", "user", "group", "win-sys",
+    "tls-crypt-v2-verify", "x509-track",
 ];
 
 /// Directives we drop silently because the service sets them itself.

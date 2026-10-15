@@ -20,8 +20,9 @@ pub const SCHEME: &str = "globalprotectcallback:";
 const KEY: PCWSTR = w!(r"Software\Classes\globalprotectcallback");
 const COMMAND: PCWSTR = w!(r"Software\Classes\globalprotectcallback\shell\open\command");
 
-/// What the handler was before we took it over: `None` = nothing registered.
-static PREVIOUS: std::sync::Mutex<Option<Option<String>>> = std::sync::Mutex::new(None);
+/// Where the handler that was there before us is kept (a value on our own
+/// key, so a crash can't lose it): the previous command, or "" for none.
+const PREVIOUS: PCWSTR = w!("MolehillPrevious");
 
 fn our_command() -> String {
     let exe = std::env::current_exe().unwrap_or_default();
@@ -29,9 +30,13 @@ fn our_command() -> String {
 }
 
 fn read_command() -> Option<String> {
+    read_value(COMMAND, PCWSTR::null())
+}
+
+fn read_value(key: PCWSTR, name: PCWSTR) -> Option<String> {
     let mut buf = vec![0u16; 2048];
     let mut len = (buf.len() * 2) as u32;
-    let rc = unsafe { RegGetValueW(HKEY_CURRENT_USER, COMMAND, PCWSTR::null(), RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr().cast()), Some(&mut len)) };
+    let rc = unsafe { RegGetValueW(HKEY_CURRENT_USER, key, name, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr().cast()), Some(&mut len)) };
     (rc == ERROR_SUCCESS).then(|| String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]))
 }
 
@@ -41,12 +46,15 @@ fn set_value(key: HKEY, name: PCWSTR, value: &str) {
     let _ = unsafe { RegSetValueExW(key, name, None, REG_SZ, Some(bytes)) };
 }
 
-fn write_handler(command: &str) {
+fn write_handler(command: &str, previous: Option<&str>) {
     unsafe {
         let mut key = HKEY::default();
         if RegCreateKeyExW(HKEY_CURRENT_USER, KEY, None, None, REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ, None, &mut key, None) == ERROR_SUCCESS {
             set_value(key, PCWSTR::null(), "URL:GlobalProtect sign-in");
             set_value(key, w!("URL Protocol"), "");
+            if let Some(previous) = previous {
+                set_value(key, PREVIOUS, previous);
+            }
             let _ = RegCloseKey(key);
         }
         let mut cmd = HKEY::default();
@@ -59,19 +67,25 @@ fn write_handler(command: &str) {
 
 /// Makes Molehill the handler, remembering the previous one.
 pub fn register() {
-    let mut prev = PREVIOUS.lock().unwrap();
-    if prev.is_none() {
-        let current = read_command();
-        *prev = Some(current.filter(|c| *c != our_command()));
-    }
-    write_handler(&our_command());
+    let ours = our_command();
+    // Already ours (a second sign-in, or a crash left it): keep what was
+    // noted then; otherwise note what is there now.
+    let previous = match read_command() {
+        Some(c) if c == ours => None,
+        Some(c) => Some(c),
+        None => Some(String::new()),
+    };
+    write_handler(&ours, previous.as_deref());
 }
 
-/// Puts back what was registered before `register`.
+/// Puts back what was registered before `register`. Harmless when Molehill
+/// isn't the handler, so it also runs at startup to clean up after a crash.
 pub fn unregister() {
-    let Some(previous) = PREVIOUS.lock().unwrap().take() else { return };
-    match previous {
-        Some(command) => write_handler(&command),
+    if read_command().as_deref() != Some(our_command().as_str()) {
+        return;
+    }
+    match read_value(KEY, PREVIOUS).filter(|p| !p.is_empty()) {
+        Some(command) => write_handler(&command, Some("")),
         None => {
             let _ = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, KEY) };
         }

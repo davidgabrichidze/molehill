@@ -541,14 +541,29 @@ unsafe extern "C" fn on_progress(privdata: *mut c_void, level: c_int, fmt: *cons
         return;
     }
     let lower = line.to_ascii_lowercase();
-    if level == PRG_DEBUG && ["cookie", "password", "passwd", "secret", "token", "session"].iter().any(|w| lower.contains(w)) {
+    let sensitive = ["cookie", "password", "passwd", "secret", "token", "session"].iter().any(|w| lower.contains(w));
+    // Debug lines carry values (headers, form fields): drop them outright.
+    // Errors and info must stay visible, so those only lose any value part.
+    if sensitive && level == PRG_DEBUG {
         return;
     }
+    let line = if sensitive { redact(&line) } else { line };
     if level == 0 {
         let ctx = unsafe { &mut *(privdata as *mut Ctx) };
         ctx.last_error = Some(line.clone());
     }
     emit(&HelperEvent::Log { line });
+}
+
+/// Cuts whatever follows `=` or `: ` in a line that mentions a secret, so a
+/// message like `cookie=abc…` becomes `cookie=…`.
+fn redact(line: &str) -> String {
+    for sep in ["=", ": "] {
+        if let Some(i) = line.find(sep) {
+            return format!("{}{sep}…", &line[..i]);
+        }
+    }
+    line.to_string()
 }
 
 /// Minimal printf for progress messages: %s %d %i %u %x %c %% with optional
