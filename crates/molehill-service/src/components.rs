@@ -19,6 +19,7 @@ use windows::core::{HSTRING, PCWSTR};
 use crate::security;
 
 pub const OPENVPN: &str = "openvpn";
+pub const OPENCONNECT: &str = "openconnect";
 const OPENVPN_FEATURES: &str = "OpenVPN,Drivers,Drivers.OvpnDco,Drivers.TAPWindows6";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -118,22 +119,44 @@ pub fn query() -> Vec<ComponentInfo> {
             None
         }
     };
-    vec![ComponentInfo {
-        id: OPENVPN.into(),
-        name: "OpenVPN".into(),
-        description: "Tunnel engine for .ovpn profiles, with the DCO and TAP network drivers".into(),
-        installed: openvpn_version(),
-        latest,
-        required: true,
-    }]
+    let openconnect_latest = match latest_openconnect() {
+        Ok(v) => Some(v),
+        Err(e) => {
+            warn!("checking for OpenConnect updates: {e:#}");
+            None
+        }
+    };
+    vec![
+        ComponentInfo {
+            id: OPENVPN.into(),
+            name: "OpenVPN".into(),
+            description: "Tunnel engine for .ovpn profiles, with the DCO and TAP network drivers".into(),
+            installed: openvpn_version(),
+            latest,
+            required: true,
+        },
+        ComponentInfo {
+            id: OPENCONNECT.into(),
+            name: "OpenConnect".into(),
+            description: "Tunnel engine for Cisco AnyConnect, Fortinet and GlobalProtect, with the Wintun driver".into(),
+            installed: openconnect_version(),
+            latest: openconnect_latest,
+            required: false,
+        },
+    ]
 }
 
 /// Downloads, verifies and installs the latest version of `component`.
 /// Returns a message for the user on success.
 pub fn install(component: &str, progress: impl Fn(&str)) -> Result<String> {
-    if component != OPENVPN {
-        bail!("unknown component `{component}`");
+    match component {
+        OPENVPN => install_openvpn(&progress),
+        OPENCONNECT => install_openconnect(&progress),
+        _ => bail!("unknown component `{component}`"),
     }
+}
+
+fn install_openvpn(progress: &impl Fn(&str)) -> Result<String> {
     progress("Looking up the latest version…");
     let release = latest_openvpn()?;
     let installed = openvpn_version();
@@ -144,7 +167,7 @@ pub fn install(component: &str, progress: impl Fn(&str)) -> Result<String> {
     let dir = paths::service_dir().join("downloads");
     security::private_dir(&dir)?;
     let file = dir.join(release.msi_url.rsplit('/').next().unwrap_or("openvpn.msi"));
-    download(&release.msi_url, &file, &progress)?;
+    download(&release.msi_url, &file, progress)?;
 
     progress("Verifying the installer signature…");
     verify_signature(&file)?;
@@ -212,4 +235,91 @@ fn verify_signature(file: &PathBuf) -> Result<()> {
         bail!("The downloaded installer is not signed by OpenVPN Inc. It was deleted.");
     }
     Ok(())
+}
+
+// ── OpenConnect ─────────────────────────────────────────────────────────
+//
+// Upstream publishes no signed Windows installer. Every tagged release's CI
+// pipeline keeps its Windows builds forever (job
+// `persist-windows-builds-for-tagged-releases`), so Molehill downloads that
+// artifact over HTTPS from the official gitlab.com/openconnect project, takes
+// the 64-bit GnuTLS NSIS installer out of it and runs it silently.
+
+const OPENCONNECT_PROJECT: &str = "https://gitlab.com/api/v4/projects/openconnect%2Fopenconnect";
+
+pub fn openconnect_dir() -> Option<PathBuf> {
+    [r"C:\Program Files\OpenConnect"].iter().map(PathBuf::from).find(|d| d.join("openconnect.exe").is_file())
+}
+
+fn openconnect_version() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    let exe = openconnect_dir()?.join("openconnect.exe");
+    let out = Command::new(exe).arg("--version").creation_flags(CREATE_NO_WINDOW).output().ok()?;
+    // "OpenConnect version v9.21"
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let line = text.lines().find(|l| l.starts_with("OpenConnect version"))?;
+    Some(line.rsplit(' ').next()?.trim_start_matches('v').to_string())
+}
+
+/// Newest tagged release, e.g. "9.21".
+fn latest_openconnect() -> Result<String> {
+    let body = ureq::get(&format!("{OPENCONNECT_PROJECT}/releases?per_page=20"))
+        .header("User-Agent", &user_agent())
+        .call()?
+        .body_mut()
+        .read_to_string()?;
+    let releases: serde_json::Value = serde_json::from_str(&body)?;
+    releases
+        .as_array()
+        .ok_or_else(|| anyhow!("unexpected GitLab response"))?
+        .iter()
+        .filter(|r| !r["upcoming_release"].as_bool().unwrap_or(false))
+        .filter_map(|r| r["tag_name"].as_str())
+        .filter(|t| t.starts_with('v') && t[1..].split('.').all(|p| p.parse::<u32>().is_ok()))
+        .max_by(|a, b| version::parse(a).cmp(&version::parse(b)))
+        .map(|t| t.trim_start_matches('v').to_string())
+        .ok_or_else(|| anyhow!("no OpenConnect release found"))
+}
+
+fn install_openconnect(progress: &impl Fn(&str)) -> Result<String> {
+    use std::os::windows::process::CommandExt;
+    progress("Looking up the latest version…");
+    let latest = latest_openconnect()?;
+    if openconnect_version().is_some_and(|i| !version::is_newer(&latest, &i)) {
+        return Ok(format!("OpenConnect {latest} is already up to date."));
+    }
+    let dir = paths::service_dir().join("downloads");
+    security::private_dir(&dir)?;
+    let zip = dir.join(format!("openconnect-{latest}-windows.zip"));
+    let url = format!("{OPENCONNECT_PROJECT}/jobs/artifacts/v{latest}/download?job=persist-windows-builds-for-tagged-releases");
+    download(&url, &zip, progress)?;
+
+    progress("Unpacking…");
+    let installer_name = format!("openconnect-installer-MinGW64-GnuTLS-v{latest}.exe");
+    let status = Command::new(r"C:\Windows\System32\tar.exe")
+        .arg("-xf")
+        .arg(&zip)
+        .arg("-C")
+        .arg(&dir)
+        .arg(&installer_name)
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .context("running tar")?;
+    let _ = std::fs::remove_file(&zip);
+    let installer = dir.join(&installer_name);
+    if !status.success() || !installer.is_file() {
+        bail!("The OpenConnect download didn't contain {installer_name}.");
+    }
+
+    progress(&format!("Installing OpenConnect {latest}…"));
+    // NSIS: /S silent. Stop running tunnels first is enforced by the caller.
+    let code = Command::new(&installer).arg("/S").status().context("running the OpenConnect installer")?.code().unwrap_or(-1);
+    let _ = std::fs::remove_file(&installer);
+    info!("OpenConnect installer exited with {code}");
+    if code != 0 || openconnect_dir().is_none() {
+        bail!("The OpenConnect installer failed (code {code}).");
+    }
+    // NSIS adds shortcuts nobody needs next to Molehill.
+    let _ = std::fs::remove_file(r"C:\Users\Public\Desktop\openconnect.exe.lnk");
+    Ok(format!("OpenConnect {latest} installed."))
 }

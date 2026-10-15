@@ -5,6 +5,8 @@
 //! elevated terminal).
 
 mod components;
+mod netstats;
+mod openconnect_auth;
 mod security;
 mod server;
 mod tunnel;
@@ -30,6 +32,12 @@ fn main() -> Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("install") => install(),
         Some("uninstall") => uninstall(),
+        // Internal helpers the service starts for OpenConnect tunnels.
+        Some("oc-auth") => openconnect_auth::run(),
+        Some("oc-stop") => {
+            let pid = std::env::args().nth(2).and_then(|p| p.parse().ok()).context("oc-stop needs a pid")?;
+            netstats::send_ctrl_c(pid)
+        }
         Some("run") => {
             init_logging(true);
             runtime()?.block_on(server::run(Arc::new(Notify::new())))

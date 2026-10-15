@@ -22,13 +22,25 @@ pub enum Request {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "protocol", rename_all = "snake_case")]
+#[serde(tag = "engine", rename_all = "snake_case")]
 pub enum TunnelSpec {
     OpenVpn {
         /// Full, self-contained config text (external files already inlined).
         config: String,
         username: Option<String>,
         password: Option<String>,
+    },
+    /// Cisco AnyConnect, Fortinet, GlobalProtect … via OpenConnect.
+    OpenConnect {
+        /// OpenConnect protocol name: `anyconnect`, `fortinet`, `gp`.
+        protocol: String,
+        server: String,
+        username: Option<String>,
+        password: Option<String>,
+        /// Group / realm to pick in the login form (name or label).
+        group: Option<String>,
+        /// `pin-sha256:…` of a server certificate the user already trusted.
+        server_cert_pin: Option<String>,
     },
 }
 
@@ -37,6 +49,8 @@ pub enum TunnelSpec {
 pub enum Answer {
     Credentials { username: String, password: String },
     Text { value: String },
+    /// Values for a [`Prompt::Form`], by field name.
+    Form { values: Vec<(String, String)> },
     Cancel,
 }
 
@@ -98,6 +112,11 @@ pub enum Prompt {
     Text { label: String, echo: bool },
     /// Browser sign-in. The app opens the URL in the user's default browser.
     OpenUrl { url: String },
+    /// A login form from the server (OpenConnect): group, username, password,
+    /// token, whatever it asks for.
+    Form { banner: Option<String>, error: Option<String>, fields: Vec<FormField> },
+    /// The server certificate isn't trusted by Windows. Accepting pins it.
+    TrustCert { host: String, pin: String, reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,4 +142,24 @@ pub fn encode<T: Serialize>(msg: &T) -> String {
     let mut s = serde_json::to_string(msg).expect("IPC messages always serialize");
     s.push('\n');
     s
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldKind {
+    Text,
+    Password,
+    Select,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FormField {
+    pub name: String,
+    pub label: String,
+    pub kind: FieldKind,
+    /// Prefilled value (never a password). For selects, the chosen option's name.
+    pub value: String,
+    /// (name, label) of each choice, for selects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<(String, String)>,
 }

@@ -1,6 +1,17 @@
-import { LineEdit, CheckBox } from "std-widgets.slint";
+import { LineEdit, CheckBox, ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Btn, LinkButton, Toggle, Badge } from "widgets.slint";
+import { Btn, LinkButton, Toggle, Badge, FieldLabel } from "widgets.slint";
+
+export struct FormFieldItem {
+    name: string,
+    label: string,
+    // "text" | "password" | "select"
+    kind: string,
+    value: string,
+    options: [string],
+    selected: int,
+    focus: bool,
+}
 
 export struct ConnectionItem {
     id: string,
@@ -10,7 +21,7 @@ export struct ConnectionItem {
     state: string,
     status: string,
     info: string,
-    // "" | "credentials" | "text" | "url"
+    // "" | "credentials" | "text" | "url" | "form" | "cert"
     prompt-kind: string,
     prompt-id: int,
     prompt-label: string,
@@ -18,6 +29,8 @@ export struct ConnectionItem {
     prompt-username: string,
     prompt-message: string,
     prompt-url: string,
+    prompt-fields: [FormFieldItem],
+    prompt-pin: string,
     remember: bool,
 }
 
@@ -32,6 +45,8 @@ export component ConnectionCard inherits Rectangle {
     callback submit-text(string);
     callback cancel-prompt();
     callback open-url(string);
+    callback field-edited(int, string);
+    callback submit-form();
 
     property <string> user: root.item.prompt-username;
     property <string> secret;
@@ -180,6 +195,77 @@ export component ConnectionCard inherits Rectangle {
                 spacing: 8px;
                 Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
                 Btn { text: "Open sign-in page"; kind: "primary"; clicked => { root.open-url(root.item.prompt-url); } }
+            }
+        }
+
+        // A login form from the server: group, username, password, token…
+        if root.item.prompt-kind == "form": VerticalLayout {
+            spacing: 8px;
+            if root.item.prompt-label != "": Text {
+                text: root.item.prompt-label;
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.item.prompt-message != "": Text {
+                text: root.item.prompt-message;
+                color: Theme.red;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            for f[i] in root.item.prompt-fields: VerticalLayout {
+                spacing: 4px;
+                FieldLabel { text: f.label; }
+                if f.kind == "select": ComboBox {
+                    model: f.options;
+                    current-index: f.selected;
+                    selected(v) => { root.field-edited(i, v); }
+                }
+                if f.kind != "select": LineEdit {
+                    text: f.value;
+                    input-type: f.kind == "password" ? InputType.password : InputType.text;
+                    edited(t) => { root.field-edited(i, t); }
+                    accepted => { root.submit-form(); }
+                    init => {
+                        if f.focus { self.focus(); }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Sign in"; kind: "primary"; clicked => { root.submit-form(); } }
+            }
+        }
+
+        // The server's certificate isn't trusted by Windows.
+        if root.item.prompt-kind == "cert": VerticalLayout {
+            spacing: 8px;
+            Text {
+                text: "Windows doesn't trust this server's certificate (" + root.item.prompt-label + ").";
+                color: Theme.yellow;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "Only continue if you expected this, for example because your company uses its own certificates. Molehill remembers your choice for this connection.";
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.item.prompt-pin;
+                font-family: Theme.mono;
+                font-size: 10px;
+                color: Theme.faint;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Trust and connect"; kind: "primary"; clicked => { root.submit-text("trust"); } }
             }
         }
     }

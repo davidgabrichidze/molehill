@@ -11,7 +11,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use client::{Client, ClientEvent};
-use molehill_core::ipc::{Answer, ComponentInfo, Event, Prompt, Request, TunnelSpec, TunnelState, TunnelStatus};
+use molehill_core::ipc::{
+    Answer, ComponentInfo, Event, FieldKind, FormField, Prompt, Request, TunnelSpec, TunnelState, TunnelStatus,
+};
 use molehill_core::profile::{self, Profile, ProfileStore, Protocol};
 use molehill_core::setup::{self, ManualOvpn, TlsKeyMode};
 use molehill_core::{ovpn, paths, secrets};
@@ -30,6 +32,8 @@ struct Tunnel {
     log: VecDeque<String>,
     /// Problems found before anything reached the service.
     local_error: Option<String>,
+    /// The fields of the current login form (OpenConnect), as the card edits them.
+    form: Option<(u64, Rc<VecModel<FormFieldItem>>, Vec<FormField>)>,
 }
 
 #[derive(Default)]
@@ -204,9 +208,11 @@ impl App {
             a().map(|s| s.submit_credentials(&id, pid, &user, &pass, remember)).unwrap_or_default()
         });
         let a = app.clone();
-        ui.on_submit_text(move |id, pid, value| {
-            a().map(|s| s.answer(&id, pid, Answer::Text { value: value.to_string() })).unwrap_or_default()
-        });
+        ui.on_submit_text(move |id, pid, value| a().map(|s| s.submit_text(&id, pid, &value)).unwrap_or_default());
+        let a = app.clone();
+        ui.on_form_field_edited(move |id, index, value| a().map(|s| s.form_field_edited(&id, index, &value)).unwrap_or_default());
+        let a = app.clone();
+        ui.on_submit_form(move |id, pid| a().map(|s| s.submit_form(&id, pid)).unwrap_or_default());
         let a = app.clone();
         ui.on_cancel_prompt(move |id, pid| a().map(|s| s.answer(&id, pid, Answer::Cancel)).unwrap_or_default());
         ui.on_open_url(|url| {
@@ -340,7 +346,12 @@ impl App {
                     self.show();
                     self.ui.set_page(Page::List);
                 }
-                st.tunnels.entry(id).or_default().prompt = Some((prompt_id, prompt));
+                let username = st.store.get(&id).and_then(|p| p.username.clone());
+                let t = st.tunnels.entry(id).or_default();
+                if let Prompt::Form { fields, .. } = &prompt {
+                    t.form = Some((prompt_id, form_model(fields, username.as_deref()), fields.clone()));
+                }
+                t.prompt = Some((prompt_id, prompt));
             }
             Event::PromptDone { id, prompt_id } => {
                 if let Some(t) = st.tunnels.get_mut(&id)
@@ -453,6 +464,72 @@ impl App {
         self.refresh();
     }
 
+    fn submit_text(&self, id: &str, prompt_id: i32, value: &str) {
+        // Trusting a server certificate is remembered for the connection.
+        {
+            let mut st = self.state.borrow_mut();
+            let pin = st.tunnels.get(id).and_then(|t| match &t.prompt {
+                Some((_, Prompt::TrustCert { pin, .. })) if value == "trust" => Some(pin.clone()),
+                _ => None,
+            });
+            if let Some(pin) = pin {
+                if let Some(p) = st.store.profiles.iter_mut().find(|p| p.id == id) {
+                    p.server_cert_pin = Some(pin);
+                }
+                let _ = st.store.save();
+            }
+        }
+        self.answer(id, prompt_id, Answer::Text { value: value.to_string() });
+    }
+
+    fn form_field_edited(&self, id: &str, index: i32, value: &str) {
+        let st = self.state.borrow();
+        let Some((_, model, _)) = st.tunnels.get(id).and_then(|t| t.form.as_ref()) else { return };
+        let Some(mut row) = model.row_data(index as usize) else { return };
+        if row.kind == "select" {
+            row.selected = row.options.iter().position(|o| o == value).unwrap_or(0) as i32;
+        }
+        row.value = value.into();
+        row.focus = false;
+        model.set_row_data(index as usize, row);
+    }
+
+    fn submit_form(&self, id: &str, prompt_id: i32) {
+        let values = {
+            let mut st = self.state.borrow_mut();
+            let Some((_, model, fields)) = st.tunnels.get(id).and_then(|t| t.form.clone()) else { return };
+            let mut values = Vec::new();
+            let (mut user, mut pass) = (None, None);
+            for (i, f) in fields.iter().enumerate() {
+                let row = model.row_data(i).unwrap_or_default();
+                let value = match f.kind {
+                    FieldKind::Select => f.options.get(row.selected.max(0) as usize).map(|o| o.0.clone()).unwrap_or_default(),
+                    _ => row.value.to_string(),
+                };
+                if f.kind == FieldKind::Text && user.is_none() && looks_like_username(&f.name, &f.label) {
+                    user = Some(value.clone());
+                }
+                let lname = format!("{} {}", f.name, f.label).to_ascii_lowercase();
+                if f.kind == FieldKind::Password && pass.is_none() && lname.contains("pass") {
+                    pass = Some(value.clone());
+                }
+                values.push((f.name.clone(), value));
+            }
+            // Remember what was typed for next time, like the OpenVPN prompt does.
+            if let Some(p) = st.store.profiles.iter_mut().find(|p| p.id == id) {
+                if let Some(u) = user.filter(|u| !u.is_empty()) {
+                    p.username = Some(u);
+                }
+                if let Some(pw) = pass.filter(|_| p.remember_password) {
+                    let _ = secrets::save_password(id, p.username.as_deref().unwrap_or(""), &pw);
+                }
+                let _ = st.store.save();
+            }
+            values
+        };
+        self.answer(id, prompt_id, Answer::Form { values });
+    }
+
     fn submit_credentials(&self, id: &str, prompt_id: i32, user: &str, pass: &str, remember: bool) {
         {
             let mut st = self.state.borrow_mut();
@@ -487,6 +564,7 @@ impl App {
         let proto = p.map(|p| p.protocol).unwrap_or(Protocol::OpenVpn);
         ui.set_form_protocol(Protocol::ALL.iter().position(|x| *x == proto).unwrap_or(0) as i32);
         ui.set_form_gateway(p.and_then(|p| p.gateway.clone()).unwrap_or_default().into());
+        ui.set_form_group(p.and_then(|p| p.group.clone()).unwrap_or_default().into());
         ui.set_form_username(p.and_then(|p| p.username.clone()).unwrap_or_default().into());
         ui.set_form_password("".into());
         ui.set_form_has_saved_password(p.is_some_and(|p| p.remember_password && secrets::load_password(&p.id).is_some()));
@@ -653,7 +731,10 @@ impl App {
         if !protocol.supported() {
             return fail(format!("{} support is coming soon.", protocol.label()));
         }
-        let source = ui.get_form_source();
+        // -1: not an OpenVPN profile, so no config file at all.
+        let source = if protocol == Protocol::OpenVpn { ui.get_form_source() } else { -1 };
+        let gateway = ui.get_form_gateway().trim().to_string();
+        let group = ui.get_form_group().trim().to_string();
         let username = ui.get_form_username().trim().to_string();
         let password = ui.get_form_password().to_string();
         let remember = ui.get_form_remember();
@@ -666,6 +747,12 @@ impl App {
 
         // The new config text, or None to keep the current file.
         let new_text = match source {
+            -1 => {
+                if gateway.is_empty() || gateway.contains(char::is_whitespace) {
+                    return fail("Enter the server address, e.g. vpn.example.com".into());
+                }
+                None
+            }
             2 => {
                 let port = ui.get_form_port().trim().to_string();
                 let port = if port.is_empty() { Ok(1194) } else { port.parse::<u16>() };
@@ -724,7 +811,7 @@ impl App {
             },
         };
 
-        let mut config = existing.as_ref().and_then(|p| p.config.clone());
+        let mut config = existing.as_ref().and_then(|p| p.config.clone()).filter(|_| source >= 0);
         if let Some(text) = new_text {
             let path = paths::configs_dir().join(format!("{id}.ovpn"));
             if let Err(e) = std::fs::create_dir_all(paths::configs_dir()).and_then(|_| std::fs::write(&path, text)) {
@@ -740,13 +827,15 @@ impl App {
                 return fail(format!("{e:#}"));
             }
         }
-        let gateway = ui.get_form_gateway().trim().to_string();
+        let server_cert_pin = existing.as_ref().filter(|p| p.gateway.as_deref() == Some(gateway.as_str())).and_then(|p| p.server_cert_pin.clone());
         st.store.upsert(Profile {
             id,
             name,
             protocol,
             config,
-            gateway: (!gateway.is_empty()).then_some(gateway),
+            gateway: (source < 0).then_some(gateway),
+            group: (source < 0 && !group.is_empty()).then_some(group),
+            server_cert_pin,
             accept_invalid_cert: source == 1 && ui.get_form_insecure(),
             server_url,
             manual,
@@ -862,6 +951,19 @@ impl App {
                         item.prompt_kind = "url".into();
                         item.prompt_url = url.clone().into();
                     }
+                    Prompt::Form { banner, error, .. } => {
+                        item.prompt_kind = "form".into();
+                        item.prompt_label = banner.clone().unwrap_or_default().into();
+                        item.prompt_message = error.clone().unwrap_or_default().into();
+                        if let Some((_, model, _)) = t.and_then(|t| t.form.as_ref()).filter(|f| f.0 == *pid) {
+                            item.prompt_fields = ModelRc::from(model.clone());
+                        }
+                    }
+                    Prompt::TrustCert { reason, pin, .. } => {
+                        item.prompt_kind = "cert".into();
+                        item.prompt_label = reason.clone().into();
+                        item.prompt_pin = pin.clone().into();
+                    }
                 }
             }
             items.push(item);
@@ -896,13 +998,18 @@ impl App {
         ui.set_service_online(st.service_online);
 
         // Components
-        let openvpn = st.components.iter().find(|c| c.id == "openvpn");
+        // Only nag about engines the profiles actually use (OpenVPN when there are none yet).
+        let needs = |engine: &str| match engine {
+            "openconnect" => st.store.profiles.iter().any(|p| p.protocol.openconnect_name().is_some()),
+            _ => st.store.profiles.is_empty() || st.store.profiles.iter().any(|p| p.protocol == Protocol::OpenVpn),
+        };
+        let missing = st.components.iter().find(|c| c.installed.is_none() && needs(&c.id));
         let (notice, attention) = if !st.service_online {
             ("The Molehill service isn't running. Reinstall Molehill, or run `molehill-service install` from an elevated terminal.".to_string(), false)
         } else if let Some(e) = &st.error {
             (e.clone(), false)
-        } else if openvpn.is_some_and(|c| c.installed.is_none()) {
-            ("OpenVPN isn't installed yet. Molehill can install it for you.".into(), true)
+        } else if let Some(c) = missing {
+            (format!("{} isn't installed yet. Molehill can install it for you.", c.name), true)
         } else if let Some(c) = st.components.iter().find(|c| c.update_available()) {
             (format!("{} {} is available.", c.name, c.latest.clone().unwrap_or_default()), true)
         } else {
@@ -991,13 +1098,24 @@ fn prepare(p: &Profile, online: bool) -> Result<TunnelSpec, String> {
     if !p.protocol.supported() {
         return Err(format!("{} support is coming soon.", p.protocol.label()));
     }
+    let password = if p.remember_password { secrets::load_password(&p.id) } else { None };
+    if let Some(protocol) = p.protocol.openconnect_name() {
+        let server = p.gateway.clone().filter(|g| !g.is_empty()).ok_or("No server address. Edit the connection and add it.")?;
+        return Ok(TunnelSpec::OpenConnect {
+            protocol: protocol.into(),
+            server,
+            username: p.username.clone(),
+            password,
+            group: p.group.clone(),
+            server_cert_pin: p.server_cert_pin.clone(),
+        });
+    }
     let config = p
         .config
         .as_ref()
         .and_then(|c| std::fs::read_to_string(c).ok())
         .ok_or("The profile file is missing. Edit the connection and choose the .ovpn again.")?;
     ovpn::sanitize(&config).map_err(|problems| problems.join("; "))?;
-    let password = if p.remember_password { secrets::load_password(&p.id) } else { None };
     Ok(TunnelSpec::OpenVpn { config, username: p.username.clone(), password })
 }
 
@@ -1040,4 +1158,41 @@ fn bytes(n: u64) -> String {
 fn duration(secs: u64) -> String {
     let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
     if h > 0 { format!("{h}h {m:02}m") } else { format!("{m}m {s:02}s") }
+}
+
+fn looks_like_username(name: &str, label: &str) -> bool {
+    let n = format!("{name} {label}").to_ascii_lowercase();
+    n.contains("user") || n.contains("login") || n.contains("email")
+}
+
+/// The card's editable copy of a server login form.
+fn form_model(fields: &[FormField], username: Option<&str>) -> Rc<VecModel<FormFieldItem>> {
+    let mut focused = false;
+    let items: Vec<FormFieldItem> = fields
+        .iter()
+        .map(|f| {
+            let labels: Vec<slint::SharedString> = f.options.iter().map(|o| o.1.clone().into()).collect();
+            let selected = f.options.iter().position(|o| o.0 == f.value).unwrap_or(0);
+            let (kind, value) = match f.kind {
+                FieldKind::Select => ("select", labels.get(selected).cloned().unwrap_or_default().to_string()),
+                FieldKind::Password => ("password", String::new()),
+                FieldKind::Text => {
+                    let fill = username.filter(|_| f.value.is_empty() && looks_like_username(&f.name, &f.label));
+                    ("text", fill.map(str::to_string).unwrap_or_else(|| f.value.clone()))
+                }
+            };
+            let focus = !focused && kind != "select" && value.is_empty();
+            focused |= focus;
+            FormFieldItem {
+                name: f.name.clone().into(),
+                label: f.label.clone().into(),
+                kind: kind.into(),
+                value: value.into(),
+                options: ModelRc::new(VecModel::from(labels)),
+                selected: selected as i32,
+                focus,
+            }
+        })
+        .collect();
+    Rc::new(VecModel::from(items))
 }

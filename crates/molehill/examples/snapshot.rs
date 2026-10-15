@@ -86,6 +86,51 @@ fn main() {
     ui.set_service_online(true);
     save(&main_window, size, &out.join("list.png"));
 
+    // Cisco: the server's login form, and an untrusted certificate.
+    let opts = |v: &[&str]| ModelRc::new(VecModel::from(v.iter().map(|s| slint::SharedString::from(*s)).collect::<Vec<_>>()));
+    let field = |label: &str, kind: &str, value: &str| FormFieldItem {
+        name: label.into(),
+        label: label.into(),
+        kind: kind.into(),
+        value: value.into(),
+        options: opts(&[]),
+        selected: 0,
+        focus: false,
+    };
+    let mut form = item("d", "Acme Cisco", "busy", "Waiting for you");
+    form.tag = "CISCO".into();
+    form.prompt_kind = "form".into();
+    form.prompt_id = 2;
+    form.prompt_label = "Please enter your username and password.".into();
+    form.prompt_fields = ModelRc::new(VecModel::from(vec![
+        FormFieldItem { options: opts(&["Employees", "Contractors", "Admins"]), kind: "select".into(), ..field("Group", "select", "Employees") },
+        field("Username", "text", "shota"),
+        field("Password", "password", ""),
+        field("Second password (OTP)", "password", ""),
+    ]));
+    let mut cert = item("e", "Lab ASA", "busy", "Waiting for you");
+    cert.tag = "CISCO".into();
+    cert.prompt_kind = "cert".into();
+    cert.prompt_id = 3;
+    cert.prompt_label = "signer not found".into();
+    cert.prompt_pin = "pin-sha256:Xy7hQ2v9w6uYpP3m0sRkq8bT1fN4cJ5eLzA2dGh6iKo=".into();
+    ui.set_connections(ModelRc::new(VecModel::from(vec![form, cert])));
+    ui.set_summary("Connecting 2 VPNs…".into());
+    ui.set_any_on(false);
+    save(&main_window, size, &out.join("cisco-prompts.png"));
+
+    // Editor, Cisco.
+    ui.set_page(Page::Editor);
+    ui.set_form_is_new(true);
+    ui.set_form_name("Acme Cisco".into());
+    ui.set_form_protocol(1);
+    ui.set_form_gateway("vpn.acme.example".into());
+    ui.set_form_group("Employees".into());
+    ui.set_form_username("shota".into());
+    ui.set_form_remember(true);
+    save(&main_window, size, &out.join("editor-cisco.png"));
+    ui.set_form_protocol(0);
+
     // Editor, manual setup.
     ui.set_page(Page::Editor);
     ui.set_form_is_new(true);

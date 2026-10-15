@@ -39,7 +39,17 @@ impl Protocol {
     }
 
     pub fn supported(self) -> bool {
-        matches!(self, Self::OpenVpn)
+        matches!(self, Self::OpenVpn | Self::AnyConnect)
+    }
+
+    /// The `--protocol` name OpenConnect uses, for the protocols it drives.
+    pub fn openconnect_name(self) -> Option<&'static str> {
+        match self {
+            Self::OpenVpn => None,
+            Self::AnyConnect => Some("anyconnect"),
+            Self::Fortinet => Some("fortinet"),
+            Self::GlobalProtect => Some("gp"),
+        }
     }
 }
 
@@ -54,6 +64,12 @@ pub struct Profile {
     /// OpenConnect protocols: the gateway address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,
+    /// OpenConnect protocols: login group / realm to pick automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// OpenConnect protocols: `pin-sha256:…` of a server certificate the user trusted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_cert_pin: Option<String>,
     /// OpenVPN Access Server address the profile was fetched from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_url: Option<String>,

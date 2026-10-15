@@ -17,7 +17,7 @@ home on Windows 11 (native title bar, Fluent controls, tray icon).
 | VPN | Sign-in | Status |
 |-----|---------|--------|
 | **OpenVPN**: from a `.ovpn`, fetched from an OpenVPN Access Server with your username/password, or entered by hand (address, port, UDP/TCP, CA, tls-auth/tls-crypt) | Username & password, certificates, private key passphrase, static & dynamic challenge (OTP), browser SSO / SAML (`WEB_AUTH`, `OPEN_URL`, `CR_TEXT`) | ✅ Milestone 1 |
-| Cisco AnyConnect / ocserv | Password (+ token), browser SSO | 🚧 next (OpenConnect) |
+| **Cisco AnyConnect** / ocserv (via OpenConnect) | Whatever form the server sends (group, username, password, OTP / second password), browser SSO / SAML, untrusted-certificate pinning | ✅ Milestone 2 |
 | Fortinet FortiGate | Password, browser SSO | 🗓 planned (OpenConnect) |
 | Palo Alto GlobalProtect | Password, SAML | 🗓 planned (OpenConnect) |
 
@@ -50,7 +50,8 @@ app offers to install it.
  molehill.exe (you)                     molehill-service.exe (LocalSystem)
  ┌─────────────────────┐   named pipe   ┌──────────────────────────────────┐
  │ Slint UI + tray     │ ◄────────────► │ tunnel manager                   │
- │ profiles (%APPDATA%)│   JSON lines   │  └─ openvpn.exe ◄─ management if │
+ │ profiles (%APPDATA%)│   JSON lines   │  ├─ openvpn.exe ◄─ management if │
+ │                     │                │  └─ oc-auth helper → openconnect │
  │ Credential Manager  │                │ component installer (MSI, signed)│
  └─────────────────────┘                └──────────────────────────────────┘
 ```
@@ -78,8 +79,13 @@ privileges. Molehill locks it down:
 3. Generated configs and management passwords live in
    `%ProgramData%\Molehill\run`, readable only by SYSTEM and Administrators,
    and are deleted as soon as they are no longer needed.
-4. Component installers are downloaded over HTTPS and run only if their
-   Authenticode signature is valid and issued to the vendor.
+4. The OpenVPN installer is downloaded over HTTPS and runs only if its
+   Authenticode signature is valid and issued to OpenVPN Inc. OpenConnect
+   publishes no signed Windows installer, so Molehill takes the official CI
+   build of each tagged release from gitlab.com/openconnect/openconnect
+   over HTTPS.
+5. OpenConnect sign-in runs in a separate helper process that loads
+   libopenconnect, so a failure there cannot take the service down.
 
 ## Building
 
@@ -133,9 +139,9 @@ installer/            Inno Setup script
 ## Roadmap
 
 1. ✅ **OpenVPN**: profiles, every sign-in type, components, tray
-2. **OpenConnect engine**: ship and update `openconnect.exe` + wintun as a
-   component, then **Cisco AnyConnect** (password, group, token, browser SSO,
-   certificate pinning on first connect)
+2. ✅ **OpenConnect engine + Cisco AnyConnect**: installs and updates
+   OpenConnect, server login forms, saved group/username/password, browser
+   SSO, certificate pinning on first connect
 3. **Fortinet** (password and SAML)
 4. **GlobalProtect** (portal/gateway, SAML via an embedded or external browser)
 5. Molehill self-update, signed releases, a winget manifest, light theme, and
