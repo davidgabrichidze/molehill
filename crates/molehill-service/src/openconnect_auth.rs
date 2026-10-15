@@ -577,7 +577,9 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
     // SAFETY: ctx lives until the end of this function; libopenconnect only
     // calls back into it from inside obtain_cookie, on this thread.
     let c = unsafe { &mut *ctx };
-    let agent = cstring("Open AnyConnect VPN Agent");
+    // The openconnect CLI's agent string. Some ASAs answer the XML login with
+    // 404 for anything else, and the HTML fallback drops 2FA (SMS) fields.
+    let agent = cstring("AnyConnect-compatible OpenConnect VPN Agent");
     let vpn = unsafe {
         (c.api.vpninfo_new)(agent.as_ptr(), Some(on_validate_cert), Some(on_write_config), Some(on_form), Some(on_progress), ctx as *mut c_void)
     };
