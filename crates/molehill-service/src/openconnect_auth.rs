@@ -189,6 +189,11 @@ struct Ctx {
     /// `auth_id` of the form the saved password went into (usually "main").
     password_form: Option<String>,
     rejected_reported: bool,
+    /// A different form followed the password form, so the server took the
+    /// password (the next step is usually a 2FA challenge).
+    password_accepted: bool,
+    /// The server's error from a failed challenge, shown with the next one.
+    challenge_error: Option<String>,
     auto_submits: u32,
     group_switched: bool,
     cancelled: bool,
@@ -298,7 +303,7 @@ pub fn plan_form(
             FieldKind::Select => {}
         }
     }
-    plan.auto_submit = !plan.fills.is_empty() && complete && !has_error && auto_submits < 3;
+    plan.auto_submit = !plan.fills.is_empty() && complete && !has_error && auto_submits < 5;
     plan
 }
 
@@ -345,22 +350,33 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         })
         .collect();
 
-    // The same login form (by auth_id) coming back with an error means the
-    // saved password was wrong. A challenge (auth_id "challenge", whose answer
-    // field libopenconnect also calls "password") with an error doesn't.
-    if let Some(filled) = &ctx.password_form {
-        if error.is_some() && *filled == auth_id && !ctx.rejected_reported {
-            ctx.rejected_reported = true;
-            emit(&HelperEvent::PasswordRejected);
-        }
+    let back_to_login = ctx.password_form.as_deref() == Some(auth_id.as_str());
+    if !back_to_login && ctx.password_form.is_some() {
+        ctx.password_accepted = true;
+    }
+    // Some ASAs restart at the login form when the 2FA code is wrong. The
+    // password got past it already, so fill it in again: the server then
+    // sends a new code and asks for it.
+    let retry = back_to_login && error.is_some() && ctx.password_accepted;
+    if retry {
+        ctx.password_accepted = false;
+        ctx.challenge_error = error.clone();
+    }
+    // The same login form (by auth_id) coming back with an error, without a
+    // challenge in between, means the saved password was wrong. A challenge
+    // (auth_id "challenge", whose answer field libopenconnect also calls
+    // "password") with an error doesn't.
+    if back_to_login && error.is_some() && !retry && !ctx.rejected_reported {
+        ctx.rejected_reported = true;
+        emit(&HelperEvent::PasswordRejected);
     }
 
     let plan = plan_form(
         &infos,
-        error.is_some(),
+        error.is_some() && !retry,
         ctx.req.username.as_deref(),
         ctx.req.password.as_deref(),
-        ctx.password_field.is_some(),
+        ctx.password_field.is_some() && !retry,
         ctx.auto_submits,
     );
     for (i, value) in &plan.fills {
@@ -410,6 +426,7 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
             }
         })
         .collect();
+    let error = error.or_else(|| ctx.challenge_error.take());
     let banner = [cstr(form.banner), cstr(form.message)].into_iter().flatten().collect::<Vec<_>>().join("\n");
     emit(&HelperEvent::Form { banner: (!banner.is_empty()).then_some(banner), error, fields });
 
@@ -569,6 +586,8 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
         password_field: None,
         password_form: None,
         rejected_reported: false,
+        password_accepted: false,
+        challenge_error: None,
         auto_submits: 0,
         group_switched: false,
         cancelled: false,
