@@ -130,6 +130,16 @@ fn main() {
     ui.set_form_username("shota".into());
     ui.set_form_remember(true);
     save(&main_window, size, &out.join("editor-cisco.png"));
+
+    // Editor, Fortinet: password, then browser SSO.
+    ui.set_form_name("Acme Forti".into());
+    ui.set_form_protocol(2);
+    ui.set_form_gateway("vpn.acme.example:10443".into());
+    ui.set_form_group("".into());
+    save(&main_window, size, &out.join("editor-forti.png"));
+    ui.set_form_sso(true);
+    save(&main_window, size, &out.join("editor-forti-sso.png"));
+    ui.set_form_sso(false);
     ui.set_form_protocol(0);
 
     // Editor, manual setup.

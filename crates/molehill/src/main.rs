@@ -569,6 +569,7 @@ impl App {
         ui.set_form_password("".into());
         ui.set_form_has_saved_password(p.is_some_and(|p| p.remember_password && secrets::load_password(&p.id).is_some()));
         ui.set_form_remember(p.is_none_or(|p| p.remember_password));
+        ui.set_form_sso(p.is_some_and(|p| p.sso));
         let source = p.map(source_of).unwrap_or(0);
         ui.set_form_source(source);
 
@@ -841,6 +842,7 @@ impl App {
             manual,
             username: (!username.is_empty()).then_some(username),
             remember_password: remember,
+            sso: protocol == Protocol::Fortinet && ui.get_form_sso(),
         });
         if let Err(e) = st.store.save() {
             return fail(format!("Couldn't save: {e:#}"));
@@ -1108,6 +1110,7 @@ fn prepare(p: &Profile, online: bool) -> Result<TunnelSpec, String> {
             password,
             group: p.group.clone(),
             server_cert_pin: p.server_cert_pin.clone(),
+            sso: p.sso,
         });
     }
     let config = p

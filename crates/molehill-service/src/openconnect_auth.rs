@@ -24,6 +24,9 @@ pub struct AuthRequest {
     pub password: Option<String>,
     pub group: Option<String>,
     pub pin: Option<String>,
+    /// Fortinet: browser SSO (SAML) instead of the login form.
+    #[serde(default)]
+    pub sso: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,6 +132,7 @@ struct Api {
     get_dnsname: unsafe extern "C" fn(Vpn) -> *const c_char,
     get_connect_url: unsafe extern "C" fn(Vpn) -> *const c_char,
     get_peer_cert_hash: unsafe extern "C" fn(Vpn) -> *const c_char,
+    get_port: unsafe extern "C" fn(Vpn) -> c_int,
     set_option_value: unsafe extern "C" fn(*mut OcFormOpt, *const c_char) -> c_int,
     set_external_browser_callback: Option<unsafe extern "C" fn(Vpn, Option<BrowserCb>) -> c_int>,
 }
@@ -158,6 +162,7 @@ impl Api {
             get_dnsname: sym!("openconnect_get_dnsname"),
             get_connect_url: sym!("openconnect_get_connect_url"),
             get_peer_cert_hash: sym!("openconnect_get_peer_cert_hash"),
+            get_port: sym!("openconnect_get_port"),
             set_option_value: sym!("openconnect_set_option_value"),
             set_external_browser_callback: unsafe { lib.get(b"openconnect_set_external_browser_callback\0") }.ok().map(|s| *s),
             _lib: lib,
@@ -197,10 +202,14 @@ struct Ctx {
     auto_submits: u32,
     group_switched: bool,
     cancelled: bool,
+    /// Fortinet SSO: only connect (and settle certificate trust), then stop
+    /// at the first form.
+    probing: bool,
+    probed: bool,
     last_error: Option<String>,
 }
 
-fn emit(ev: &HelperEvent) {
+pub(crate) fn emit(ev: &HelperEvent) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{}", serde_json::to_string(ev).unwrap_or_default());
     let _ = out.flush();
@@ -309,6 +318,10 @@ pub fn plan_form(
 
 unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_int {
     let ctx = unsafe { &mut *(privdata as *mut Ctx) };
+    if ctx.probing {
+        ctx.probed = true;
+        return OC_FORM_RESULT_CANCELLED;
+    }
     let form = unsafe { &mut *form };
     let error = cstr(form.error);
 
@@ -573,11 +586,24 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'static>>) -> Result<AuthResult> {
+/// The URL to start at. A Fortinet realm goes into the login URL the way the
+/// FortiGate itself redirects to it (`/remote/login?realm=…`); libopenconnect
+/// picks it up from there.
+fn login_url(req: &AuthRequest) -> String {
+    let server = req.server.trim().trim_end_matches('/');
+    let Some(realm) = req.group.as_deref().map(str::trim).filter(|r| !r.is_empty() && req.protocol == "fortinet") else {
+        return server.to_string();
+    };
+    let host = server.strip_prefix("https://").unwrap_or(server);
+    let host = host.split('/').next().unwrap_or(host);
+    format!("https://{host}/remote/login?realm={}", crate::fortinet_sso::url_encode(realm))
+}
+
+fn authenticate(req: AuthRequest,input: std::io::Lines<std::io::StdinLock<'static>>) -> Result<AuthResult> {
     let api = Api::load(&req.dir)?;
     unsafe { (api.init_ssl)() };
     let protocol = cstring(&req.protocol);
-    let server = cstring(&req.server);
+    let server = cstring(&login_url(&req));
     let ctx = Box::into_raw(Box::new(Ctx {
         api,
         req,
@@ -591,6 +617,8 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
         auto_submits: 0,
         group_switched: false,
         cancelled: false,
+        probing: false,
+        probed: false,
         last_error: None,
     }));
     // SAFETY: ctx lives until the end of this function; libopenconnect only
@@ -616,9 +644,25 @@ fn authenticate(req: AuthRequest, input: std::io::Lines<std::io::StdinLock<'stat
         if let Some(set_browser) = c.api.set_external_browser_callback {
             unsafe { set_browser(vpn, Some(on_browser)) };
         }
+        let fortinet_sso = c.req.sso && c.req.protocol == "fortinet";
+        c.probing = fortinet_sso;
         let rc = unsafe { (c.api.obtain_cookie)(vpn) };
         if c.cancelled {
             bail!("Cancelled");
+        }
+        if fortinet_sso {
+            if !c.probed {
+                bail!("{}", c.last_error.clone().unwrap_or_else(|| "Couldn't reach the server".into()));
+            }
+            let pin = cstr(unsafe { (c.api.get_peer_cert_hash)(vpn) }).ok_or_else(|| anyhow!("no server certificate"))?;
+            // The name, not the address libopenconnect resolved it to: the browser
+            // and curl need it for the certificate and the cookies.
+            let host = cstr(unsafe { (c.api.get_dnsname)(vpn) })
+                .or_else(|| cstr(unsafe { (c.api.get_hostname)(vpn) }))
+                .ok_or_else(|| anyhow!("no server name"))?;
+            let port = unsafe { (c.api.get_port)(vpn) };
+            let base = if port == 443 || port <= 0 { format!("https://{host}") } else { format!("https://{host}:{port}") };
+            return crate::fortinet_sso::sso(&base, &pin, c.req.group.as_deref());
         }
         if rc != 0 {
             bail!("{}", c.last_error.clone().unwrap_or_else(|| "Sign-in failed".into()));

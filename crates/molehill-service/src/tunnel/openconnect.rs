@@ -1,4 +1,4 @@
-//! One OpenConnect tunnel (Cisco AnyConnect, and later Fortinet / GlobalProtect).
+//! One OpenConnect tunnel (Cisco AnyConnect, Fortinet, and later GlobalProtect).
 //!
 //! Two steps, like NetworkManager does it: the `oc-auth` helper signs in with
 //! libopenconnect (forms, certificate trust, browser SSO all become prompts in
@@ -31,6 +31,7 @@ pub struct Spec {
     pub password: Option<String>,
     pub group: Option<String>,
     pub pin: Option<String>,
+    pub sso: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -149,6 +150,7 @@ impl Session {
             password: spec.password.clone(),
             group: spec.group.clone(),
             pin: spec.pin.clone(),
+            sso: spec.sso,
         };
         send_line(&mut input, &serde_json::to_string(&req)?).await?;
 
@@ -197,6 +199,11 @@ impl Session {
                             continue;
                         }
                         let reply = match (purpose, answer) {
+                            // The helper is waiting for the browser, not reading answers.
+                            (Purpose::WebAuth, Answer::Cancel) => {
+                                let _ = helper.start_kill();
+                                return Ok(None);
+                            }
                             (_, Answer::Cancel) => HelperAnswer::Cancel,
                             (Purpose::Form, Answer::Form { values }) => HelperAnswer::Form { values },
                             (Purpose::Trust, Answer::Text { value }) => HelperAnswer::Trust { accept: value == "trust" },

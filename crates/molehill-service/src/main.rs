@@ -5,6 +5,7 @@
 //! elevated terminal).
 
 mod components;
+mod fortinet_sso;
 mod netstats;
 mod openconnect_auth;
 mod security;

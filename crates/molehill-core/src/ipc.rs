@@ -41,6 +41,9 @@ pub enum TunnelSpec {
         group: Option<String>,
         /// `pin-sha256:…` of a server certificate the user already trusted.
         server_cert_pin: Option<String>,
+        /// Fortinet: browser SSO (SAML) instead of the login form.
+        #[serde(default)]
+        sso: bool,
     },
 }
 
