@@ -1,0 +1,4 @@
+/target
+/installer/Output
+*.log
+/snapshots

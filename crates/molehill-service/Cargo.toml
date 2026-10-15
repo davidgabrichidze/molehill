@@ -1,0 +1,19 @@
+[package]
+name = "molehill-service"
+description = "Molehill background service: runs VPN tunnels with the privileges they need"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+molehill-core.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+windows.workspace = true
+ureq = "3"
+windows-service = "0.8"

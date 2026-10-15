@@ -1,0 +1,25 @@
+[package]
+name = "molehill"
+description = "One VPN client for OpenVPN, Cisco AnyConnect, Fortinet and GlobalProtect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+molehill-core.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+windows.workspace = true
+open = "5"
+raw-window-handle = "0.6"
+rfd = "0.17"
+slint = { version = "1.18", features = ["raw-window-handle-06", "renderer-software"] }
+tray-icon = "0.26"
+
+[dev-dependencies]
+png = "0.18"
+
+[build-dependencies]
+slint-build = "1.18"
+winresource = "0.1"

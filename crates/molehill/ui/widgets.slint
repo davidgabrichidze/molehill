@@ -1,0 +1,207 @@
+import { LineEdit, CheckBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export component Btn inherits Rectangle {
+    in property <string> text;
+    // "primary" | "ghost" | "danger"
+    in property <string> kind: "ghost";
+    in property <bool> enabled: true;
+    callback clicked();
+    horizontal-stretch: 0;
+
+    height: 32px;
+    border-radius: 4px;
+    background: !root.enabled ? Theme.surface
+        : root.kind == "primary" ? (ta.has-hover ? Theme.accent.brighter(0.12) : Theme.accent)
+        : root.kind == "danger" ? (ta.has-hover ? Theme.red.transparentize(0.8) : transparent)
+        : (ta.has-hover ? Theme.surface-hover : Theme.surface);
+    border-width: root.kind == "primary" ? 0px : 1px;
+    border-color: root.kind == "danger" ? Theme.red.transparentize(0.5) : Theme.border;
+    opacity: root.enabled ? 1 : 0.5;
+    animate background { duration: 120ms; }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        Text {
+            text: root.text;
+            color: root.kind == "primary" ? Theme.bg : root.kind == "danger" ? Theme.red : Theme.text;
+            font-size: 13px;
+            font-weight: root.kind == "primary" ? 600 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Small monospace text action, e.g. "edit".
+export component LinkButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> dot;
+    callback clicked();
+    horizontal-stretch: 0;
+    border-radius: 4px;
+    background: ta.has-hover ? Theme.surface-hover : transparent;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        spacing: 5px;
+        Text {
+            text: root.text;
+            font-family: Theme.mono;
+            font-size: 11px;
+            color: ta.has-hover ? Theme.accent : Theme.muted;
+            vertical-alignment: center;
+        }
+        if root.dot: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.yellow;
+            }
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Toggle inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> busy;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    width: 40px;
+    height: 22px;
+    border-radius: 4px;
+    background: root.busy ? Theme.yellow.transparentize(0.75) : root.checked ? Theme.accent : transparent;
+    border-width: root.checked && !root.busy ? 0px : 1px;
+    border-color: root.busy ? Theme.yellow : ta.has-hover ? Theme.text : Theme.muted;
+    opacity: root.enabled ? 1 : 0.35;
+    animate background { duration: 150ms; }
+
+    Rectangle {
+        width: 14px;
+        height: 14px;
+        border-radius: 2px;
+        y: (parent.height - self.height) / 2;
+        x: root.checked ? parent.width - self.width - 4px : 4px;
+        background: root.busy ? Theme.yellow : root.checked ? Theme.bg : (ta.has-hover ? Theme.text : Theme.muted);
+        opacity: root.busy ? 0.55 + 0.45 * Math.sin(animation-tick() / 3ms * 1deg) : 1;
+        animate x { duration: 160ms; easing: ease-out; }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> tint: Theme.accent;
+    width: 52px;
+    height: 22px;
+    border-radius: 2px;
+    background: root.tint.transparentize(0.86);
+    Text {
+        text: root.text;
+        font-family: Theme.mono;
+        font-size: 10px;
+        font-weight: 700;
+        color: root.tint;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component FieldLabel inherits Text {
+    font-size: 12px;
+    color: Theme.muted;
+}
+
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <string> note;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 34px;
+    border-radius: 4px;
+    background: root.selected ? Theme.accent.transparentize(0.85) : ta.has-hover && root.enabled ? Theme.surface-hover : Theme.surface;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    opacity: root.enabled ? 1 : 0.55;
+
+    VerticalLayout {
+        alignment: center;
+        padding-left: 6px;
+        padding-right: 6px;
+        Text {
+            text: root.text;
+            font-size: 12px;
+            color: root.selected ? Theme.accent : Theme.text;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        if root.note != "": Text {
+            text: root.note;
+            font-family: Theme.mono;
+            font-size: 9px;
+            color: Theme.muted;
+            horizontal-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The Molehill mark: a mound with a tunnel and two eyes peeking out (see mole.svg).
+export component Mole inherits Rectangle {
+    in property <color> tint: Theme.accent;
+    in property <color> hole: Theme.bg;
+    in property <color> eyes: Theme.text;
+
+    Path {
+        viewbox-x: 0; viewbox-y: 24; viewbox-width: 64; viewbox-height: 32;
+        commands: "M4 52 A28 26 0 0 1 60 52 Z M3.5 51 L60.5 51 A1.5 1.5 0 0 1 60.5 54 L3.5 54 A1.5 1.5 0 0 1 3.5 51 Z";
+        fill: root.tint;
+        animate fill { duration: 250ms; }
+    }
+    Path {
+        viewbox-x: 0; viewbox-y: 24; viewbox-width: 64; viewbox-height: 32;
+        commands: "M20 52 A12 13 0 0 1 44 52 Z";
+        fill: root.hole;
+    }
+    Path {
+        viewbox-x: 0; viewbox-y: 24; viewbox-width: 64; viewbox-height: 32;
+        commands: "M24.9 46 A2.6 2.6 0 1 0 30.1 46 A2.6 2.6 0 1 0 24.9 46 Z M33.9 46 A2.6 2.6 0 1 0 39.1 46 A2.6 2.6 0 1 0 33.9 46 Z";
+        fill: root.eyes;
+    }
+}
+
+export component Hint inherits Text {
+    font-size: 11px;
+    color: Theme.muted;
+    wrap: word-wrap;
+}

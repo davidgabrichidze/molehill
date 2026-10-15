@@ -1,0 +1,156 @@
+import { Theme } from "theme.slint";
+import { Mole } from "widgets.slint";
+
+export struct MenuTunnel {
+    id: string,
+    name: string,
+    // "off" | "busy" | "on" | "error"
+    state: string,
+}
+
+component Separator inherits Rectangle {
+    height: 9px;
+    Rectangle {
+        y: 4px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+component MenuRow inherits Rectangle {
+    in property <string> text;
+    in property <string> trailing;
+    in property <color> dot: transparent;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 30px;
+    border-radius: 3px;
+    background: ta.has-hover && root.enabled ? (root.danger ? Theme.red.transparentize(0.85) : Theme.surface-hover) : transparent;
+    opacity: root.enabled ? 1 : 0.4;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        if root.dot != transparent: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 1px;
+                background: root.dot;
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: 13px;
+            color: root.danger && ta.has-hover ? Theme.red : Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.trailing != "": Text {
+            text: root.trailing;
+            font-family: Theme.mono;
+            font-size: 11px;
+            color: Theme.muted;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The tray icon's right-click menu, drawn by Molehill instead of Windows.
+export component TrayMenu inherits Window {
+    title: "Molehill menu";
+    no-frame: true;
+    always-on-top: true;
+    background: Theme.bg;
+    width: 272px;
+    default-font-family: "Segoe UI Variable Text";
+
+    in property <[MenuTunnel]> tunnels;
+    in property <string> summary;
+    in property <bool> any-on;
+    in property <bool> any-busy;
+    callback toggle(string);
+    callback open-app();
+    callback disconnect-all();
+    callback quit();
+    callback dismiss();
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Escape {
+                root.dismiss();
+                return accept;
+            }
+            reject
+        }
+
+        Rectangle {
+            border-width: 1px;
+            border-color: Theme.border;
+
+            VerticalLayout {
+                padding: 6px;
+                spacing: 1px;
+
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-bottom: 6px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        Mole {
+                            width: 30px;
+                            height: 15px;
+                            tint: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.accent;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text { text: "molehill"; font-family: Theme.mono; font-size: 13px; font-weight: 700; color: Theme.text; }
+                        Text {
+                            text: root.summary;
+                            font-size: 11px;
+                            color: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.muted;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                Separator { }
+
+                for t in root.tunnels: MenuRow {
+                    text: t.name;
+                    dot: t.state == "on" ? Theme.green : t.state == "busy" ? Theme.yellow : t.state == "error" ? Theme.red : Theme.faint;
+                    trailing: t.state == "on" ? "on" : t.state == "busy" ? "…" : "off";
+                    clicked => { root.toggle(t.id); }
+                }
+                if root.tunnels.length == 0: MenuRow { text: "No connections yet"; enabled: false; }
+
+                Separator { }
+
+                MenuRow { text: "Open Molehill"; clicked => { root.open-app(); } }
+                MenuRow {
+                    text: "Disconnect all";
+                    enabled: root.any-on || root.any-busy;
+                    clicked => { root.disconnect-all(); }
+                }
+
+                Separator { }
+
+                MenuRow { text: "Quit Molehill"; danger: true; clicked => { root.quit(); } }
+            }
+        }
+    }
+}
