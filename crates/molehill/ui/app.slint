@@ -90,7 +90,7 @@ export component AppWindow inherits Window {
     in-out property <string> form-group;
     in-out property <string> form-username;
     in-out property <bool> form-remember;
-    // Fortinet: browser SSO instead of username / password.
+    // Fortinet / GlobalProtect: browser SSO instead of username / password.
     in-out property <bool> form-sso;
     in-out property <string> form-error;
     // 0 = .ovpn file, 1 = Access Server, 2 = manual
@@ -218,7 +218,7 @@ export component AppWindow inherits Window {
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: "OpenVPN, Cisco AnyConnect and Fortinet today. GlobalProtect is on the way.";
+                    text: "OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.";
                     font-size: 12px;
                     color: Theme.muted;
                     horizontal-alignment: center;
@@ -299,7 +299,7 @@ export component AppWindow inherits Window {
                             Chip { text: "OpenVPN"; selected: root.form-protocol == 0; enabled: root.form-is-new; clicked => { root.form-protocol = 0; } }
                             Chip { text: "Cisco"; selected: root.form-protocol == 1; enabled: root.form-is-new; clicked => { root.form-protocol = 1; root.form-error = ""; } }
                             Chip { text: "Fortinet"; selected: root.form-protocol == 2; enabled: root.form-is-new; clicked => { root.form-protocol = 2; root.form-error = ""; } }
-                            Chip { text: "GlobalProtect"; note: "soon"; selected: root.form-protocol == 3; enabled: false; }
+                            Chip { text: "GlobalProtect"; selected: root.form-protocol == 3; enabled: root.form-is-new; clicked => { root.form-protocol = 3; root.form-error = ""; } }
                         }
                     }
 
@@ -444,7 +444,7 @@ export component AppWindow inherits Window {
                         spacing: 6px;
                         FieldLabel { text: "Server address"; }
                         LineEdit {
-                            placeholder-text: root.form-protocol == 2 ? "vpn.example.com or vpn.example.com:10443" : "vpn.example.com or vpn.example.com/group";
+                            placeholder-text: root.form-protocol == 2 ? "vpn.example.com or vpn.example.com:10443" : root.form-protocol == 3 ? "The portal, e.g. vpn.example.com" : "vpn.example.com or vpn.example.com/group";
                             text <=> root.form-gateway;
                         }
                         Hint { text: "The address your IT gave you, as you would type it in the official client."; }
@@ -452,14 +452,14 @@ export component AppWindow inherits Window {
 
                     if root.form-protocol != 0: VerticalLayout {
                         spacing: 6px;
-                        FieldLabel { text: root.form-protocol == 2 ? "Realm (optional)" : "Group (optional)"; }
+                        FieldLabel { text: root.form-protocol == 2 ? "Realm (optional)" : root.form-protocol == 3 ? "Gateway (optional)" : "Group (optional)"; }
                         LineEdit {
-                            placeholder-text: root.form-protocol == 2 ? "Only if your IT gave you one" : "Picked for you from the server's list";
+                            placeholder-text: root.form-protocol == 2 ? "Only if your IT gave you one" : root.form-protocol == 3 ? "Picked for you from the portal's list" : "Picked for you from the server's list";
                             text <=> root.form-group;
                         }
                     }
 
-                    if root.form-protocol == 2: VerticalLayout {
+                    if root.form-protocol >= 2: VerticalLayout {
                         spacing: 6px;
                         FieldLabel { text: "Sign in with"; }
                         HorizontalLayout {
@@ -469,12 +469,12 @@ export component AppWindow inherits Window {
                         }
                         Hint {
                             text: root.form-sso
-                                ? "Your browser opens the company sign-in page (SAML)."
-                                : "Codes from SMS, email or FortiToken are asked for at sign-in. Leave the code empty to get a FortiToken push.";
+                                ? (root.form-protocol == 3 ? "Your browser opens the company sign-in page (SAML), then hands the result back to Molehill." : "Your browser opens the company sign-in page (SAML).")
+                                : (root.form-protocol == 3 ? "Codes from SMS, email or a token app are asked for at sign-in." : "Codes from SMS, email or FortiToken are asked for at sign-in. Leave the code empty to get a FortiToken push.");
                         }
                     }
 
-                    if !(root.form-protocol == 2 && root.form-sso): HorizontalLayout {
+                    if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {
                         spacing: 8px;
                         VerticalLayout {
                             spacing: 6px;
@@ -494,7 +494,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if !(root.form-protocol == 2 && root.form-sso): HorizontalLayout {
+                    if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {
                         spacing: 10px;
                         VerticalLayout {
                             alignment: center;

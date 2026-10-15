@@ -16,6 +16,7 @@ use crate::{components, security, tunnel};
 
 pub enum TunnelCmd {
     Answer { prompt_id: u64, answer: Answer },
+    SsoCallback { url: String },
     Disconnect,
 }
 
@@ -97,6 +98,13 @@ impl Manager {
     fn send(&self, id: &str, cmd: TunnelCmd) {
         if let Some(tx) = self.inner.lock().unwrap().tunnels.get(id) {
             let _ = tx.send(cmd);
+        }
+    }
+
+    /// To every tunnel; only one waiting for the browser takes it.
+    fn sso_callback(&self, url: String) {
+        for tx in self.inner.lock().unwrap().tunnels.values() {
+            let _ = tx.send(TunnelCmd::SsoCallback { url: url.clone() });
         }
     }
 
@@ -291,6 +299,7 @@ async fn handle_client(pipe: NamedPipeServer, mgr: Arc<Manager>) {
                 });
             }
             Request::InstallComponent { component } => mgr.install(component),
+            Request::SsoCallback { url } => mgr.sso_callback(url),
         }
     }
     forward.abort();

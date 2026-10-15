@@ -151,6 +151,7 @@ impl Session {
             group: spec.group.clone(),
             pin: spec.pin.clone(),
             sso: spec.sso,
+            saml_login: false,
         };
         send_line(&mut input, &serde_json::to_string(&req)?).await?;
 
@@ -212,6 +213,14 @@ impl Session {
                         self.clear_prompt();
                         self.set(TunnelState::Authenticating, "Signing in");
                         send_line(&mut input, &serde_json::to_string(&reply)?).await?;
+                    }
+                    Some(TunnelCmd::SsoCallback { url }) => {
+                        if !matches!(self.pending, Some((_, Purpose::WebAuth))) {
+                            continue;
+                        }
+                        self.clear_prompt();
+                        self.set(TunnelState::Authenticating, "Signing in");
+                        send_line(&mut input, &serde_json::to_string(&HelperAnswer::Callback { url })?).await?;
                     }
                     // Disconnect while signing in: just stop the helper.
                     Some(TunnelCmd::Disconnect) | None => {
@@ -278,7 +287,7 @@ impl Session {
                     }
                 }
                 cmd = cmds.recv(), if !stopping => match cmd {
-                    Some(TunnelCmd::Answer { .. }) => {}
+                    Some(TunnelCmd::Answer { .. } | TunnelCmd::SsoCallback { .. }) => {}
                     Some(TunnelCmd::Disconnect) | None => {
                         stopping = true;
                         self.set(TunnelState::Disconnecting, "Closing");

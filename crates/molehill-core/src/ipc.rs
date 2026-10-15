@@ -19,6 +19,8 @@ pub enum Request {
     Answer { id: String, prompt_id: u64, answer: Answer },
     QueryComponents { refresh: bool },
     InstallComponent { component: String },
+    /// The browser finished a GlobalProtect sign-in (`globalprotectcallback:…`).
+    SsoCallback { url: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +43,7 @@ pub enum TunnelSpec {
         group: Option<String>,
         /// `pin-sha256:…` of a server certificate the user already trusted.
         server_cert_pin: Option<String>,
-        /// Fortinet: browser SSO (SAML) instead of the login form.
+        /// Fortinet / GlobalProtect: browser SSO (SAML) instead of the login form.
         #[serde(default)]
         sso: bool,
     },

@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use molehill_core::ipc::{FieldKind, FormField};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     /// OpenConnect's install directory (holds libopenconnect-5.dll).
     pub dir: PathBuf,
@@ -24,9 +24,19 @@ pub struct AuthRequest {
     pub password: Option<String>,
     pub group: Option<String>,
     pub pin: Option<String>,
-    /// Fortinet: browser SSO (SAML) instead of the login form.
+    /// Fortinet / GlobalProtect: browser SSO (SAML) instead of the login form.
     #[serde(default)]
     pub sso: bool,
+    /// The password is a GlobalProtect SAML cookie, not the user's password.
+    #[serde(default)]
+    pub saml_login: bool,
+}
+
+/// What `authenticate` came to.
+enum Next {
+    Done(AuthResult),
+    /// Sign in again with this request (GlobalProtect, after the browser).
+    Again(AuthRequest),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,6 +66,8 @@ pub enum HelperEvent {
 pub enum HelperAnswer {
     Form { values: Vec<(String, String)> },
     Trust { accept: bool },
+    /// GlobalProtect SSO: the `globalprotectcallback:` URL the browser opened.
+    Callback { url: String },
     Cancel,
 }
 
@@ -188,7 +200,7 @@ struct Ctx {
     api: Api,
     req: AuthRequest,
     vpn: Vpn,
-    input: std::io::Lines<std::io::StdinLock<'static>>,
+    input: Input,
     /// Name of the password field the saved password went into.
     password_field: Option<String>,
     /// `auth_id` of the form the saved password went into (usually "main").
@@ -338,6 +350,19 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     }
 
     let auth_id = cstr(form.auth_id).unwrap_or_default();
+    // GlobalProtect's gateway choice: nothing to ask with one gateway, or
+    // when the saved one is already picked.
+    if auth_id == "_portal" && !form.authgroup_opt.is_null() {
+        let choices = select_choices(form.authgroup_opt);
+        let current = usize::try_from(form.authgroup_selection).ok().and_then(|i| choices.get(i));
+        let saved = ctx.req.group.as_deref().is_some_and(|g| current.is_some_and(|(n, l)| same(n, g) || same(l, g)));
+        if choices.len() == 1 || saved {
+            if let Some((_, label)) = current.or(choices.first()) {
+                emit(&HelperEvent::Log { line: format!("Using gateway {label}") });
+            }
+            return OC_FORM_RESULT_OK;
+        }
+    }
     // Every field, for the log; then the ones the user can see.
     let mut all = Vec::new();
     let mut opts = Vec::new();
@@ -379,7 +404,7 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     // challenge in between, means the saved password was wrong. A challenge
     // (auth_id "challenge", whose answer field libopenconnect also calls
     // "password") with an error doesn't.
-    if back_to_login && error.is_some() && !retry && !ctx.rejected_reported {
+    if back_to_login && error.is_some() && !retry && !ctx.rejected_reported && !ctx.req.saml_login {
         ctx.rejected_reported = true;
         emit(&HelperEvent::PasswordRejected);
     }
@@ -578,10 +603,15 @@ fn format_c(fmt: &[u8], args: &[usize]) -> String {
 pub fn run() -> Result<()> {
     let mut input = std::io::stdin().lock().lines();
     let first = input.next().ok_or_else(|| anyhow!("no request"))??;
-    let req: AuthRequest = serde_json::from_str(&first)?;
-    match authenticate(req, input) {
-        Ok(result) => emit(&HelperEvent::Done(result)),
-        Err(e) => emit(&HelperEvent::Failed { message: format!("{e:#}") }),
+    let mut req: AuthRequest = serde_json::from_str(&first)?;
+    loop {
+        let (result, rest) = authenticate(req, input);
+        input = rest;
+        match result {
+            Ok(Next::Again(next)) => req = next,
+            Ok(Next::Done(result)) => break emit(&HelperEvent::Done(result)),
+            Err(e) => break emit(&HelperEvent::Failed { message: format!("{e:#}") }),
+        }
     }
     Ok(())
 }
@@ -599,8 +629,14 @@ fn login_url(req: &AuthRequest) -> String {
     format!("https://{host}/remote/login?realm={}", crate::fortinet_sso::url_encode(realm))
 }
 
-fn authenticate(req: AuthRequest,input: std::io::Lines<std::io::StdinLock<'static>>) -> Result<AuthResult> {
-    let api = Api::load(&req.dir)?;
+type Input = std::io::Lines<std::io::StdinLock<'static>>;
+
+/// One sign-in with libopenconnect. Hands `input` back for the next round.
+fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
+    let api = match Api::load(&req.dir) {
+        Ok(api) => api,
+        Err(e) => return (Err(e), input),
+    };
     unsafe { (api.init_ssl)() };
     let protocol = cstring(&req.protocol);
     let server = cstring(&login_url(&req));
@@ -631,7 +667,8 @@ fn authenticate(req: AuthRequest,input: std::io::Lines<std::io::StdinLock<'stati
         (c.api.vpninfo_new)(agent.as_ptr(), Some(on_validate_cert), Some(on_write_config), Some(on_form), Some(on_progress), ctx as *mut c_void)
     };
     if vpn.is_null() {
-        bail!("libopenconnect couldn't start");
+        let ctx = unsafe { Box::from_raw(ctx) };
+        return (Err(anyhow!("libopenconnect couldn't start")), ctx.input);
     }
     c.vpn = vpn;
     let result = (|| {
@@ -644,17 +681,20 @@ fn authenticate(req: AuthRequest,input: std::io::Lines<std::io::StdinLock<'stati
         if let Some(set_browser) = c.api.set_external_browser_callback {
             unsafe { set_browser(vpn, Some(on_browser)) };
         }
-        let fortinet_sso = c.req.sso && c.req.protocol == "fortinet";
-        c.probing = fortinet_sso;
+        // Browser SSO that libopenconnect can't do: it only connects here, to
+        // settle certificate trust; the rest happens outside it.
+        let sso = c.req.sso && matches!(c.req.protocol.as_str(), "fortinet" | "gp");
+        c.probing = sso;
         let rc = unsafe { (c.api.obtain_cookie)(vpn) };
         if c.cancelled {
             bail!("Cancelled");
         }
-        if fortinet_sso {
-            if !c.probed {
-                bail!("{}", c.last_error.clone().unwrap_or_else(|| "Couldn't reach the server".into()));
-            }
-            let pin = cstr(unsafe { (c.api.get_peer_cert_hash)(vpn) }).ok_or_else(|| anyhow!("no server certificate"))?;
+        if sso {
+            // A SAML-only GlobalProtect portal fails before any form, but
+            // after the TLS handshake, so the certificate is known anyway.
+            let pin = cstr(unsafe { (c.api.get_peer_cert_hash)(vpn) })
+                .filter(|_| c.probed || c.req.protocol == "gp")
+                .ok_or_else(|| anyhow!("{}", c.last_error.clone().unwrap_or_else(|| "Couldn't reach the server".into())))?;
             // The name, not the address libopenconnect resolved it to: the browser
             // and curl need it for the certificate and the cookies.
             let host = cstr(unsafe { (c.api.get_dnsname)(vpn) })
@@ -662,7 +702,11 @@ fn authenticate(req: AuthRequest,input: std::io::Lines<std::io::StdinLock<'stati
                 .ok_or_else(|| anyhow!("no server name"))?;
             let port = unsafe { (c.api.get_port)(vpn) };
             let base = if port == 443 || port <= 0 { format!("https://{host}") } else { format!("https://{host}:{port}") };
-            return crate::fortinet_sso::sso(&base, &pin, c.req.group.as_deref());
+            if c.req.protocol == "gp" {
+                let req = c.req.clone();
+                return crate::gp_sso::sso(&base, &pin, &req, || c.answer()).map(Next::Again);
+            }
+            return crate::fortinet_sso::sso(&base, &pin, c.req.group.as_deref()).map(Next::Done);
         }
         if rc != 0 {
             bail!("{}", c.last_error.clone().unwrap_or_else(|| "Sign-in failed".into()));
@@ -676,13 +720,13 @@ fn authenticate(req: AuthRequest,input: std::io::Lines<std::io::StdinLock<'stati
             _ => None,
         };
         let pin = cstr(unsafe { (c.api.get_peer_cert_hash)(vpn) });
-        Ok(AuthResult { cookie, connect_url, resolve, pin })
+        Ok(Next::Done(AuthResult { cookie, connect_url, resolve, pin }))
     })();
-    unsafe {
+    let ctx = unsafe {
         (c.api.vpninfo_free)(vpn);
-        drop(Box::from_raw(ctx));
-    }
-    result
+        Box::from_raw(ctx)
+    };
+    (result, ctx.input)
 }
 
 #[cfg(test)]

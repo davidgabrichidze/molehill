@@ -139,7 +139,14 @@ fn main() {
     save(&main_window, size, &out.join("editor-forti.png"));
     ui.set_form_sso(true);
     save(&main_window, size, &out.join("editor-forti-sso.png"));
+
+    // Editor, GlobalProtect with browser SSO.
+    ui.set_form_name("Acme GP".into());
+    ui.set_form_protocol(3);
+    ui.set_form_gateway("gp.acme.example".into());
+    save(&main_window, size, &out.join("editor-gp-sso.png"));
     ui.set_form_sso(false);
+    save(&main_window, size, &out.join("editor-gp.png"));
     ui.set_form_protocol(0);
 
     // Editor, manual setup.

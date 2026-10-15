@@ -39,7 +39,7 @@ impl Protocol {
     }
 
     pub fn supported(self) -> bool {
-        matches!(self, Self::OpenVpn | Self::AnyConnect | Self::Fortinet)
+        true
     }
 
     /// The `--protocol` name OpenConnect uses, for the protocols it drives.
@@ -82,7 +82,7 @@ pub struct Profile {
     pub username: Option<String>,
     #[serde(default)]
     pub remember_password: bool,
-    /// Fortinet: sign in with browser SSO (SAML) instead of a password.
+    /// Fortinet / GlobalProtect: sign in with browser SSO (SAML) instead of a password.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sso: bool,
 }

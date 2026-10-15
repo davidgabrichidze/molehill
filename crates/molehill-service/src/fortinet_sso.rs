@@ -83,21 +83,29 @@ fn answer_browser(stream: TcpStream) -> Option<String> {
 
 /// Trades the SAML id for the session cookie.
 fn trade(base: &str, pin: &str, id: &str) -> Result<String> {
+    let url = format!("{base}/remote/saml/auth_id?id={}", url_encode(id));
+    let headers = pinned_curl(pin, &["-o", "NUL", "-D", "-", &url]).context("Couldn't finish the sign-in")?;
+    session_cookie(&headers).ok_or_else(|| anyhow!("The FortiGate didn't hand out a session after the browser sign-in"))
+}
+
+/// Runs Windows' curl.exe pinned to the server certificate `pin`
+/// (`pin-sha256:…`); returns what it printed.
+pub(crate) fn pinned_curl(pin: &str, args: &[&str]) -> Result<String> {
     use std::os::windows::process::CommandExt;
     let spki = pin.strip_prefix("pin-sha256:").ok_or_else(|| anyhow!("unexpected certificate pin {pin}"))?;
     let curl = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into()).join("System32\\curl.exe");
     // -k: trust comes from the pin, which is stricter than the CA check.
     let out = Command::new(curl)
-        .args(["-sS", "-k", "--max-time", "20", "-o", "NUL", "-D", "-"])
+        .args(["-sS", "-k", "--max-time", "20"])
         .arg(format!("--pinnedpubkey=sha256//{spki}"))
-        .arg(format!("{base}/remote/saml/auth_id?id={}", url_encode(id)))
+        .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .context("running curl.exe")?;
     if !out.status.success() {
-        bail!("Couldn't finish the sign-in: {}", String::from_utf8_lossy(&out.stderr).trim());
+        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }
-    session_cookie(&String::from_utf8_lossy(&out.stdout)).ok_or_else(|| anyhow!("The FortiGate didn't hand out a session after the browser sign-in"))
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// The last non-empty `SVPNCOOKIE` in a set of response headers (the
@@ -125,7 +133,7 @@ fn query_param(target: &str, key: &str) -> Option<String> {
     })
 }
 
-fn url_decode(s: &str) -> String {
+pub(crate) fn url_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

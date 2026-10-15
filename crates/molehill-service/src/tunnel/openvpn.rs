@@ -275,6 +275,7 @@ impl Session {
                 },
                 cmd = cmds.recv(), if cmds_open => match cmd {
                     Some(TunnelCmd::Answer { prompt_id, answer }) => self.answer(prompt_id, answer).await,
+                    Some(TunnelCmd::SsoCallback { .. }) => {}
                     Some(TunnelCmd::Disconnect) | None => {
                         cmds_open = cmd.is_some();
                         if !self.stopping {

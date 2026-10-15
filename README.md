@@ -19,7 +19,7 @@ home on Windows 11 (native title bar, Fluent controls, tray icon).
 | **OpenVPN**: from a `.ovpn`, fetched from an OpenVPN Access Server with your username/password, or entered by hand (address, port, UDP/TCP, CA, tls-auth/tls-crypt) | Username & password, certificates, private key passphrase, static & dynamic challenge (OTP), browser SSO / SAML (`WEB_AUTH`, `OPEN_URL`, `CR_TEXT`) | ✅ Milestone 1 |
 | **Cisco AnyConnect** / ocserv (via OpenConnect) | Whatever form the server sends (group, username, password, OTP / second password), browser SSO / SAML, untrusted-certificate pinning | ✅ Milestone 2 |
 | **Fortinet** FortiGate (via OpenConnect) | Username & password, realm, 2FA codes (SMS, email, FortiToken, push), browser SSO / SAML, certificate pinning | ✅ Milestone 3 |
-| Palo Alto GlobalProtect | Password, SAML | 🗓 planned (OpenConnect) |
+| **Palo Alto GlobalProtect** (via OpenConnect) | Username & password, portal → gateway (picked automatically when there is one, or the saved one), 2FA challenges, browser SSO / SAML in your default browser, certificate pinning. No HIP reports yet | ✅ Milestone 4 |
 
 What already works:
 
@@ -144,7 +144,10 @@ installer/            Inno Setup script
    SSO, certificate pinning on first connect
 3. ✅ **Fortinet**: password + 2FA through OpenConnect, realm, browser SSO
    (SAML) the FortiClient way, via a redirect to `127.0.0.1:8020`
-4. **GlobalProtect** (portal/gateway, SAML via an embedded or external browser)
+4. ✅ **GlobalProtect**: portal and gateway login through OpenConnect; SAML in
+   the default browser like gpauth (`default-browser=2` prelogin, then the
+   `globalprotectcallback:` link, handled by Molehill only while it waits).
+   Still to do: HIP reports (OpenConnect can't run the HIP script on Windows)
 5. Molehill self-update, signed releases, a winget manifest, light theme, and
    following the Windows accent color
 

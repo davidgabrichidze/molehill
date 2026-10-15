@@ -6,6 +6,7 @@
 
 mod components;
 mod fortinet_sso;
+mod gp_sso;
 mod netstats;
 mod openconnect_auth;
 mod security;

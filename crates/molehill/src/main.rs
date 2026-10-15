@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client;
+mod gpcallback;
 mod logo;
 mod platform;
 mod tray;
@@ -54,6 +55,8 @@ struct State {
     save_after_fetch: bool,
     log_for: Option<String>,
     opened_urls: HashSet<(String, u64)>,
+    /// GlobalProtect tunnels waiting for the browser (see gpcallback).
+    gp_signins: HashSet<String>,
 }
 
 struct App {
@@ -87,6 +90,11 @@ fn on_ui(f: impl FnOnce(&Rc<App>) + Send + 'static) {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Started by the browser at the end of a GlobalProtect sign-in.
+    if let Some(url) = std::env::args().skip(1).find(|a| a.starts_with(gpcallback::SCHEME)) {
+        gpcallback::forward(&url);
+        return Ok(());
+    }
     if !platform::claim_single_instance() {
         return Ok(());
     }
@@ -145,6 +153,7 @@ fn main() -> anyhow::Result<()> {
         app.show();
     }
     slint::run_event_loop_until_quit()?;
+    gpcallback::unregister();
     Ok(())
 }
 
@@ -329,6 +338,9 @@ impl App {
                 }
             }
             Event::Status(s) => {
+                if s.state != TunnelState::Authenticating && st.gp_signins.remove(&s.id) && st.gp_signins.is_empty() {
+                    gpcallback::unregister();
+                }
                 let t = st.tunnels.entry(s.id.clone()).or_default();
                 if !s.state.is_active() {
                     t.stats = None;
@@ -338,6 +350,11 @@ impl App {
             }
             Event::Prompt { id, prompt_id, prompt } => {
                 if let Prompt::OpenUrl { url } = &prompt {
+                    // The browser hands the result back via globalprotectcallback:.
+                    if st.store.get(&id).is_some_and(|p| p.protocol == Protocol::GlobalProtect) {
+                        st.gp_signins.insert(id.clone());
+                        gpcallback::register();
+                    }
                     if st.opened_urls.insert((id.clone(), prompt_id)) {
                         let _ = open::that(url);
                     }
@@ -842,7 +859,7 @@ impl App {
             manual,
             username: (!username.is_empty()).then_some(username),
             remember_password: remember,
-            sso: protocol == Protocol::Fortinet && ui.get_form_sso(),
+            sso: matches!(protocol, Protocol::Fortinet | Protocol::GlobalProtect) && ui.get_form_sso(),
         });
         if let Err(e) = st.store.save() {
             return fail(format!("Couldn't save: {e:#}"));
