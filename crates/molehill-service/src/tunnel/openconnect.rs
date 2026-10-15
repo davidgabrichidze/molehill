@@ -220,7 +220,8 @@ impl Session {
     async fn tunnel(&mut self, spec: &Spec, dir: &std::path::Path, auth: AuthResult, cmds: &mut UnboundedReceiver<TunnelCmd>) -> Result<()> {
         self.set(TunnelState::Connecting, "Starting the tunnel");
         let ifname = format!("Molehill-{}", &self.id[..self.id.len().min(8)]);
-        let script = format!("cscript.exe //nologo \"{}\"", dir.join("vpnc-script-win.js").display());
+        // Just the path: on Windows openconnect runs `cscript.exe /e:JScript "<script>"` itself.
+        let script = dir.join("vpnc-script-win.js").display().to_string();
         let mut cmd = Command::new(dir.join("openconnect.exe"));
         cmd.arg(format!("--protocol={}", spec.protocol))
             .arg("--cookie-on-stdin")
