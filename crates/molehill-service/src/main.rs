@@ -16,6 +16,9 @@ mod components;
 #[cfg(target_os = "macos")]
 #[path = "components_macos.rs"]
 mod components;
+#[cfg(target_os = "macos")]
+#[path = "dns_macos.rs"]
+mod dns;
 mod fortinet_sso;
 mod gp_sso;
 #[cfg(windows)]
@@ -38,6 +41,9 @@ mod server;
 #[cfg(target_os = "macos")]
 mod sweep;
 mod tunnel;
+#[cfg(target_os = "macos")]
+#[path = "vpnc_macos.rs"]
+mod vpnc;
 
 #[cfg(windows)]
 use std::ffi::OsString;
@@ -74,6 +80,14 @@ fn main() -> Result<()> {
         Some("uninstall") => uninstall(),
         // Internal helpers the service starts for OpenConnect tunnels.
         Some("oc-auth") => openconnect_auth::run(),
+        // OpenVPN's --up / --down hook (see dns_macos.rs).
+        #[cfg(target_os = "macos")]
+        Some("dns-up") => dns::run(true, std::env::args().nth(2)),
+        #[cfg(target_os = "macos")]
+        Some("dns-down") => dns::run(false, std::env::args().nth(2)),
+        // openconnect's --script (see vpnc_macos.rs).
+        #[cfg(target_os = "macos")]
+        Some("vpnc-hook") => vpnc::run(std::env::args().nth(2)),
         #[cfg(windows)]
         Some("oc-stop") => {
             let pid = std::env::args().nth(2).and_then(|p| p.parse().ok()).context("oc-stop needs a pid")?;

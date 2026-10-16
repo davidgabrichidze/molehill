@@ -4,11 +4,12 @@
 //! outlive the tunnel that set it.
 //!
 //! What gets removed:
-//! - every `State:/Network/Service/Molehill-*` key (written by `dns-up`);
-//! - keys and host routes recorded under `state/` while tunnels ran (the
-//!   ones vpnc-script names after the utun device, and its route to the VPN
-//!   gateway).
+//! - every `State:/Network/Service/Molehill-*` key (DNS of OpenVPN and
+//!   OpenConnect tunnels alike);
+//! - the routes recorded in `state/<tunnel id>` while tunnels ran: the ones
+//!   that outlive the utun device (to the VPN gateway, split excludes).
 
+use std::fmt;
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::Path;
@@ -47,9 +48,41 @@ pub fn removal_script(keys: &[String]) -> String {
     s
 }
 
-/// Recorded lines that are IP addresses; anything else is ignored.
-pub fn parse_routes(text: &str) -> Vec<IpAddr> {
-    text.lines().filter_map(|l| l.trim().parse().ok()).collect()
+/// A network (or, at full length, a host) a route points at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Net {
+    pub addr: IpAddr,
+    pub len: u8,
+}
+
+impl Net {
+    pub fn is_host(&self) -> bool {
+        self.len == if self.addr.is_ipv6() { 128 } else { 32 }
+    }
+
+    /// `10.0.0.0/8`, or a bare address (a host).
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let (addr, len) = match s.split_once('/') {
+            Some((a, l)) => (a.parse::<IpAddr>().ok()?, l.parse::<u8>().ok()?),
+            None => {
+                let a = s.parse::<IpAddr>().ok()?;
+                (a, if a.is_ipv6() { 128 } else { 32 })
+            }
+        };
+        (len <= if addr.is_ipv6() { 128 } else { 32 }).then_some(Self { addr, len })
+    }
+}
+
+impl fmt::Display for Net {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.addr, self.len)
+    }
+}
+
+/// Recorded lines that are networks or addresses; anything else is ignored.
+pub fn parse_routes(text: &str) -> Vec<Net> {
+    text.lines().filter_map(Net::parse).collect()
 }
 
 fn scutil(script: &str) -> Option<String> {
@@ -68,24 +101,27 @@ fn scutil(script: &str) -> Option<String> {
 /// Removes leftovers, then empties `state_dir`. Runs once at daemon start,
 /// before any tunnel.
 pub fn run(state_dir: &Path) {
-    let mut keys = scutil(&format!("list {KEY_PREFIX}.*\nquit\n")).map(|t| parse_list(&t)).unwrap_or_default();
-    let recorded = |name: &str| std::fs::read_to_string(state_dir.join(name)).unwrap_or_default();
-    keys.extend(recorded("keys").lines().map(str::trim).filter(|k| valid_key(k)).map(String::from));
+    let keys = scutil(&format!("list {KEY_PREFIX}.*\nquit\n")).map(|t| parse_list(&t)).unwrap_or_default();
     if !keys.is_empty() {
-        info!("removing {} network setting(s) left by an earlier run", keys.len());
+        info!("removing {} DNS setting(s) left by an earlier run", keys.len());
         if scutil(&removal_script(&keys)).is_none() {
             warn!("scutil failed; stale DNS settings may remain until reboot");
         }
     }
-    for ip in parse_routes(&recorded("routes")) {
-        let flag = if ip.is_ipv6() { "-inet6" } else { "-inet" };
-        info!("removing the host route to {ip} left by an earlier run");
-        let _ = Command::new(ROUTE).env_clear().args(["-n", "delete", flag, "-host", &ip.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
-    }
-    if let Ok(entries) = std::fs::read_dir(state_dir) {
-        for e in entries.flatten() {
-            let _ = std::fs::remove_file(e.path());
+    for entry in std::fs::read_dir(state_dir).into_iter().flatten().flatten() {
+        let recorded = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        for net in parse_routes(&recorded) {
+            info!("removing the route to {net} left by an earlier run");
+            let family = if net.addr.is_ipv6() { "-inet6" } else { "-inet" };
+            let (kind, target) = if net.is_host() { ("-host", net.addr.to_string()) } else { ("-net", net.to_string()) };
+            let _ = Command::new(ROUTE)
+                .env_clear()
+                .args(["-n", "delete", family, kind, &target])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
+        let _ = std::fs::remove_file(entry.path());
     }
 }
 
@@ -116,8 +152,10 @@ mod tests {
     }
 
     #[test]
-    fn recorded_routes_must_be_addresses() {
-        let ips = parse_routes("203.0.113.7\n-host 1.2.3.4\n2001:db8::1\n\n; rm -rf /\n");
-        assert_eq!(ips, vec!["203.0.113.7".parse::<IpAddr>().unwrap(), "2001:db8::1".parse().unwrap()]);
+    fn recorded_routes_must_be_networks() {
+        let nets = parse_routes("203.0.113.7/32\n10.99.0.0/16\n-host 1.2.3.4\n2001:db8::1\n10.0.0.0/33\n\n; rm -rf /\n");
+        let shown: Vec<String> = nets.iter().map(ToString::to_string).collect();
+        assert_eq!(shown, vec!["203.0.113.7/32", "10.99.0.0/16", "2001:db8::1/128"]);
+        assert!(nets[0].is_host() && !nets[1].is_host() && nets[2].is_host());
     }
 }

@@ -101,6 +101,13 @@ struct Api {
     set_client_cert: unsafe extern "C" fn(Vpn, *const c_char, *const c_char) -> c_int,
     set_option_value: unsafe extern "C" fn(*mut OcFormOpt, *const c_char) -> c_int,
     set_external_browser_callback: Option<unsafe extern "C" fn(Vpn, Option<BrowserCb>) -> c_int>,
+    /// The bundled GnuTLS was built with Homebrew's CA file compiled in,
+    /// which a Mac without Homebrew doesn't have; trust comes from the
+    /// `.pkg`'s copy of the system roots instead.
+    #[cfg(target_os = "macos")]
+    set_system_trust: Option<unsafe extern "C" fn(Vpn, std::ffi::c_uint)>,
+    #[cfg(target_os = "macos")]
+    set_cafile: Option<unsafe extern "C" fn(Vpn, *const c_char) -> c_int>,
 }
 
 impl Api {
@@ -140,6 +147,10 @@ impl Api {
             set_client_cert: sym!("openconnect_set_client_cert"),
             set_option_value: sym!("openconnect_set_option_value"),
             set_external_browser_callback: unsafe { lib.get(b"openconnect_set_external_browser_callback\0") }.ok().map(|s| *s),
+            #[cfg(target_os = "macos")]
+            set_system_trust: unsafe { lib.get(b"openconnect_set_system_trust\0") }.ok().map(|s| *s),
+            #[cfg(target_os = "macos")]
+            set_cafile: unsafe { lib.get(b"openconnect_set_cafile\0") }.ok().map(|s| *s),
             _lib: lib,
         })
     }
@@ -560,12 +571,49 @@ unsafe extern "C" fn on_browser(_: Vpn, uri: *const c_char, _: *mut c_void) -> c
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 unsafe extern "C" fn on_progress(privdata: *mut c_void, level: c_int, fmt: *const c_char, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) {
     // Debug output too (it explains odd server forms), minus anything secret.
     if level > PRG_DEBUG || fmt.is_null() {
         return;
     }
     let line = format_c(unsafe { CStr::from_ptr(fmt) }.to_bytes(), &[a1, a2, a3, a4, a5, a6]);
+    unsafe { progress_line(privdata, level, line) };
+}
+
+// macOS: the C shim (src/oc_progress.c) is the variadic callback; it formats
+// the message and calls `on_progress_line` with the result.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn molehill_set_progress_line(f: unsafe extern "C" fn(*mut c_void, c_int, *const c_char));
+    fn molehill_progress(privdata: *mut c_void, level: c_int, fmt: *const c_char, ...);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn on_progress_line(privdata: *mut c_void, level: c_int, line: *const c_char) {
+    if level > PRG_DEBUG || line.is_null() {
+        return;
+    }
+    let line = unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned();
+    unsafe { progress_line(privdata, level, line) };
+}
+
+/// The progress callback to hand libopenconnect.
+#[cfg(windows)]
+fn progress_cb() -> ProgressCb {
+    on_progress
+}
+
+#[cfg(target_os = "macos")]
+fn progress_cb() -> ProgressCb {
+    unsafe { molehill_set_progress_line(on_progress_line) };
+    // SAFETY: only ever called by libopenconnect, which calls it as the
+    // variadic function it really is.
+    unsafe { std::mem::transmute::<unsafe extern "C" fn(*mut c_void, c_int, *const c_char, ...), ProgressCb>(molehill_progress) }
+}
+
+/// A formatted progress message: logged, minus anything secret.
+unsafe fn progress_line(privdata: *mut c_void, level: c_int, line: String) {
     let line = line.trim_end().to_string();
     if line.is_empty() {
         return;
@@ -718,13 +766,21 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
     // 404 for anything else, and the HTML fallback drops 2FA (SMS) fields.
     let agent = cstring("AnyConnect-compatible OpenConnect VPN Agent");
     let vpn = unsafe {
-        (c.api.vpninfo_new)(agent.as_ptr(), Some(on_validate_cert), Some(on_write_config), Some(on_form), Some(on_progress), ctx as *mut c_void)
+        (c.api.vpninfo_new)(agent.as_ptr(), Some(on_validate_cert), Some(on_write_config), Some(on_form), Some(progress_cb()), ctx as *mut c_void)
     };
     if vpn.is_null() {
         let ctx = unsafe { Box::from_raw(ctx) };
         return (Err(anyhow!("libopenconnect couldn't start")), ctx.input);
     }
     c.vpn = vpn;
+    #[cfg(target_os = "macos")]
+    if let (Some(trust), Some(cafile)) = (c.api.set_system_trust, c.api.set_cafile) {
+        let file = cstring(&format!("{}/cacert.pem", molehill_core::paths::ENGINES_DIR));
+        unsafe {
+            trust(vpn, 0);
+            cafile(vpn, file.as_ptr());
+        }
+    }
     let result = (|| {
         if unsafe { (c.api.set_protocol)(vpn, protocol.as_ptr()) } != 0 {
             bail!("OpenConnect doesn't support the {} protocol", c.req.protocol);
@@ -879,5 +935,29 @@ mod redact_tests {
         assert_eq!(super::redact("Got cookie=abcdef"), "Got cookie=…");
         assert_eq!(super::redact("Got session=12345 for user"), "Got session=…");
         assert_eq!(super::redact("Session terminated by server"), "Session terminated by server");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod progress_shim_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static LINES: Mutex<Vec<(c_int, String)>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn capture(_: *mut c_void, level: c_int, line: *const c_char) {
+        let line = unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned();
+        LINES.lock().unwrap().push((level, line));
+    }
+
+    /// The shim must format real variadic arguments (strings, ints, longs)
+    /// the way C does; this is what broke with fixed arguments on arm64.
+    #[test]
+    fn shim_formats_variadic_arguments() {
+        unsafe { molehill_set_progress_line(capture) };
+        let fmt = cstring("Connected to %s:%d (%ld bytes, %u%%)");
+        let host = cstring("vpn.example.com");
+        unsafe { molehill_progress(std::ptr::null_mut(), 1, fmt.as_ptr(), host.as_ptr(), 443 as c_int, 123_456_789_012i64, 7u32) };
+        assert_eq!(LINES.lock().unwrap().pop(), Some((1, "Connected to vpn.example.com:443 (123456789012 bytes, 7%)".into())));
     }
 }

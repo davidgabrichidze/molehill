@@ -46,22 +46,25 @@ pub fn query_local(_previous: &[ComponentInfo]) -> Vec<ComponentInfo> {
     describe()
 }
 
+/// The bundled version is the latest one for this Molehill, so the page
+/// reads "up to date" and offers no Install/Update button.
 fn describe() -> Vec<ComponentInfo> {
+    let (openvpn, openconnect) = (openvpn_version(), openconnect_version());
     vec![
         ComponentInfo {
             id: OPENVPN.into(),
             name: "OpenVPN".into(),
             description: "Tunnel engine for .ovpn profiles (bundled with Molehill)".into(),
-            installed: openvpn_version(),
-            latest: None,
+            installed: openvpn.clone(),
+            latest: openvpn,
             required: true,
         },
         ComponentInfo {
             id: OPENCONNECT.into(),
             name: "OpenConnect".into(),
             description: "Tunnel engine for Cisco AnyConnect, Fortinet and GlobalProtect (bundled with Molehill)".into(),
-            installed: openconnect_version(),
-            latest: None,
+            installed: openconnect.clone(),
+            latest: openconnect,
             required: false,
         },
     ]

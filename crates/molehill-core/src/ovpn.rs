@@ -37,6 +37,32 @@ const BLOCKED: &[&str] = &[
 /// Directives we drop silently because the service sets them itself.
 const STRIPPED: &[&str] = &["script-security", "auth-retry", "auth-nocache"];
 
+/// Refused on macOS on top of `BLOCKED`. The macOS service runs OpenVPN with
+/// `--script-security 2` (its own DNS hook needs it), so these script hooks
+/// would otherwise run as root. (OpenVPN 2.7 added `dns-updown`.)
+#[cfg(target_os = "macos")]
+const BLOCKED_MACOS: &[&str] = &["dns-updown", "client-crresponse"];
+
+/// Dropped on macOS: `persist-tun` keeps the device across reconnects
+/// without running the up/down hook again, so DNS would go stale.
+#[cfg(target_os = "macos")]
+const STRIPPED_MACOS: &[&str] = &["persist-tun"];
+
+/// What macOS can't run: script hooks (see `BLOCKED_MACOS`) and TAP devices,
+/// which macOS doesn't have.
+#[cfg(target_os = "macos")]
+fn macos_problem(name: &str, args: &[String]) -> Option<String> {
+    if BLOCKED_MACOS.contains(&name) {
+        return Some(format!("`{name}` is not allowed (runs programs as root)"));
+    }
+    let tap = match name {
+        "dev" => args.first().is_some_and(|a| a.starts_with("tap")),
+        "dev-type" => args.first().is_some_and(|a| a == "tap"),
+        _ => false,
+    };
+    tap.then(|| "TAP devices (`dev tap`) are not available on macOS; only `dev tun` profiles work".to_string())
+}
+
 fn tokens(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -166,8 +192,17 @@ pub fn sanitize(text: &str) -> Result<String, Vec<String>> {
             problems.push(format!("`{name}` is not allowed (runs programs or writes files as SYSTEM)"));
             return Ok(Some(format!("# removed by Molehill: {name}")));
         }
+        #[cfg(target_os = "macos")]
+        if let Some(problem) = macos_problem(name, args) {
+            problems.push(problem);
+            return Ok(Some(format!("# removed by Molehill: {name}")));
+        }
         if STRIPPED.contains(&name) {
             return Ok(Some(format!("# set by Molehill: {name}")));
+        }
+        #[cfg(target_os = "macos")]
+        if STRIPPED_MACOS.contains(&name) {
+            return Ok(Some(format!("# removed by Molehill on macOS: {name}")));
         }
         let first = args.first();
         if (INLINE_TEXT.contains(&name) || name == "pkcs12")
@@ -223,6 +258,26 @@ mod tests {
         let ok = sanitize("client\nauth-user-pass creds.txt\nscript-security 3\n").unwrap();
         assert!(ok.contains("\nauth-user-pass\n"));
         assert!(!ok.contains("script-security 3"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_refuses_script_hooks_and_tap() {
+        for d in ["dns-updown /tmp/x.sh", "client-crresponse /tmp/x.sh", "dev tap", "dev tap0", "dev-type tap"] {
+            let problems = sanitize(&format!("client\n{d}\n")).unwrap_err();
+            assert_eq!(problems.len(), 1, "{d}");
+        }
+        assert!(sanitize("client\ndev tun\n").is_ok());
+        let ok = sanitize("client\ndev tun\npersist-tun\n").unwrap();
+        assert!(!ok.contains("\npersist-tun\n"));
+    }
+
+    /// The macOS-only rules leave Windows exactly as it was.
+    #[cfg(windows)]
+    #[test]
+    fn windows_keeps_its_rules() {
+        let ok = sanitize("client\ndev tap\npersist-tun\ndns-updown x\n").unwrap();
+        assert!(ok.contains("\ndev tap\n") && ok.contains("\npersist-tun\n") && ok.contains("\ndns-updown x\n"));
     }
 
     #[test]
