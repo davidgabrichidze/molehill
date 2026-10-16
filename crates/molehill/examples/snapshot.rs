@@ -78,7 +78,13 @@ fn main() {
     prompt.prompt_username = "shota".into();
     prompt.remember = true;
     let off = item("c", "Home lab", "off", "home.example.net:443");
-    ui.set_connections(ModelRc::new(VecModel::from(vec![on.clone(), prompt, off.clone()])));
+    let mut forti = item("f", "Client project", "off", "fortigate.client.io:10443");
+    forti.tag = "FORTI".into();
+    let mut gp = item("g", "Partner portal", "off", "gp.partner.net");
+    gp.tag = "GP".into();
+    let mut cisco = item("k", "Work", "off", "vpn.company.com");
+    cisco.tag = "CISCO".into();
+    ui.set_connections(ModelRc::new(VecModel::from(vec![on.clone(), prompt, cisco, forti, gp, off.clone()])));
     ui.set_summary("Connecting Client VPN… · Connected to Acme Corp".into());
     ui.set_any_on(true);
     ui.set_any_busy(true);

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Molehill: one app for all your VPNs</title>
+<meta name="description" content="Molehill is a small, free Windows VPN client for OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect. Several tunnels at once, sign-in right on the card, browser SSO, saved passwords. Open source.">
+<meta property="og:title" content="Molehill: one app for all your VPNs">
+<meta property="og:description" content="OpenVPN, Cisco AnyConnect, Fortinet and GlobalProtect, side by side, in one small Windows app.">
+<meta property="og:image" content="brand/png/hero/molehill-multi-vpn-hero.png">
+<meta name="theme-color" content="#16161e">
+<script>document.documentElement.classList.add("js")</script>
+<link rel="icon" type="image/png" href="brand/png/icons/molehill-app-icon-blue.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #16161e; --night: #1a1b26; --panel: #1f2335; --panel2: #24283b; --line: #292e42;
+    --text: #c0caf5; --muted: #a9b1d6; --dim: #737aa2; --faint: #3b4261; --white: #f4f4f8;
+    --blue: #7aa2f7; --mint: #9ece6a; --amber: #e0af68; --violet: #bb9af7; --coral: #f7768e; --cyan: #7dcfff; --nose: #ff9e8a;
+    --tint: var(--blue);
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+    --sans: Inter, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  /* Grid and flex items may shrink below their content (long monospace
+     addresses), so nothing pushes the page wider than the screen. */
+  .hero .wrap > *, .versus > *, .grid > *, .steps > *, .legend > * { min-width: 0; }
+  .tunnel .name i { overflow-wrap: anywhere; }
+  body { overflow-x: hidden; }
+  .mono { font-family: var(--mono); }
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  nav { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: rgba(22,22,30,.78); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--white); font: 800 20px var(--sans); letter-spacing: -.5px; }
+  .brand svg { width: 38px; height: 18px; }
+  nav .links { margin-left: auto; display: flex; gap: 22px; font: 13px var(--mono); }
+  nav .links a { color: var(--muted); }
+  nav .links a:hover { color: var(--blue); text-decoration: none; }
+  @media (max-width: 640px) { nav .links a:not(.gh) { display: none; } }
+
+  /* ── buttons ─────────────────────────────────────────────── */
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; font: 700 15px var(--mono); border: 1px solid var(--line); color: var(--text); background: transparent; transition: transform .15s, background .15s, border-color .15s; }
+  .btn:hover { text-decoration: none; border-color: var(--dim); transform: translateY(-1px); }
+  .btn.primary { background: var(--blue); color: var(--night); border-color: var(--blue); }
+  .btn.primary:hover { background: #8fb2ff; }
+  .btn small { font-weight: 400; opacity: .7; }
+
+  /* ── hero ────────────────────────────────────────────────── */
+  .hero { position: relative; overflow: hidden; padding: 72px 0 40px; }
+  .hero .wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; }
+  @media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; } }
+  .eyebrow { font: 12px var(--mono); letter-spacing: 3px; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 14px 0 18px; font: 800 clamp(44px, 6.4vw, 76px)/1.02 var(--sans); letter-spacing: -2.5px; color: var(--white); }
+  h1 span { color: var(--blue); }
+  .lede { font-size: 19px; color: var(--muted); max-width: 32em; margin: 0 0 30px; }
+  .lede b { color: var(--text); font-weight: 600; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .meta { margin-top: 18px; font: 12px var(--mono); color: var(--dim); }
+  .meta span + span::before { content: "·"; margin: 0 10px; color: var(--faint); }
+
+  /* the playground: flip tunnels, watch the mole */
+  .play { position: relative; background: var(--night); border: 1px solid var(--line); padding: 28px 26px 22px; }
+  .play::before { content: "try it"; position: absolute; top: -10px; left: 18px; background: var(--bg); padding: 0 8px; font: 11px var(--mono); letter-spacing: 2px; color: var(--dim); text-transform: uppercase; }
+  .stage { display: flex; justify-content: center; padding: 6px 0 18px; }
+  .mole { width: 230px; height: 108px; overflow: visible; }
+  /* The mole: pops out of its hill, watches the cursor, blinks, wiggles its
+     nose on hover and hops when a tunnel comes up. */
+  .mole .tint { fill: var(--tint); transition: fill .35s; }
+  /* Down in the hill until it scrolls into view (only with JS, so the mole
+     is always visible without it), then up it pops. */
+  .js .mole:not(.awake) .rise { transform: translateY(11px); }
+  .mole.awake .rise { animation: rise 1s cubic-bezier(.34, 1.7, .5, 1) both; animation-delay: var(--delay, .15s); }
+  .mole .bob { animation: bob 6s ease-in-out 1.6s infinite; }
+  .mole .look { transition: transform .25s ease-out; }
+  .mole .eye { animation: blink 5s 2s infinite; transform-origin: center; transform-box: fill-box; }
+  .mole .nose { transform-origin: center; transform-box: fill-box; }
+  .mole:hover .nose, .stage:hover .nose { animation: sniff .45s ease-in-out 2; }
+  .mole .hill { transform-origin: 32px 58px; }
+  .mole.hop .hill { animation: hop .5s cubic-bezier(.3, 1.6, .5, 1); }
+  @keyframes rise { from { transform: translateY(11px); } to { transform: translateY(0); } }
+  @keyframes bob { 0%, 40%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.4px); } 60% { transform: translateY(0); } }
+  @keyframes blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+  @keyframes sniff { 0%, 100% { transform: rotate(0) translateY(0); } 30% { transform: rotate(12deg) translateY(-.6px); } 60% { transform: rotate(-10deg) translateY(.3px); } }
+  @keyframes hop { 0% { transform: scale(1, 1); } 35% { transform: scale(1.04, .92); } 65% { transform: scale(.98, 1.08) translateY(-1.5px); } 100% { transform: scale(1, 1); } }
+  .status { text-align: center; font: 13px var(--mono); color: var(--muted); min-height: 22px; margin-bottom: 14px; }
+  .status b { color: var(--tint); transition: color .35s; }
+  .tunnels { display: grid; gap: 8px; }
+  .tunnel { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid transparent; padding: 10px 12px; cursor: pointer; user-select: none; transition: border-color .2s, background .2s; }
+  .tunnel:hover { background: var(--panel2); }
+  .tunnel.on { border-left-color: var(--mint); border-color: rgba(158,206,106,.45); }
+  .tunnel.busy { border-left-color: var(--amber); }
+  .tag { width: 52px; text-align: center; font: 700 10px var(--mono); border: 1px solid; padding: 2px 0; }
+  .tunnel .name { flex: 1; line-height: 1.25; }
+  .tunnel .name b { display: block; color: var(--text); font: 700 13px var(--mono); }
+  .tunnel .name i { font: normal 11px var(--mono); color: var(--dim); }
+  .tunnel.on .name i { color: var(--mint); }
+  .tunnel.busy .name i { color: var(--amber); }
+  .switch { width: 36px; height: 18px; border: 1px solid var(--dim); position: relative; transition: background .2s, border-color .2s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; background: var(--dim); transition: left .18s, background .2s; }
+  .tunnel.on .switch { background: var(--blue); border-color: var(--blue); }
+  .tunnel.on .switch::after { left: 21px; background: var(--night); }
+  .tunnel.busy .switch { border-color: var(--amber); background: rgba(224,175,104,.2); }
+  .tunnel.busy .switch::after { background: var(--amber); left: 12px; }
+
+  /* ── sections ────────────────────────────────────────────── */
+  section { padding: 84px 0; }
+  section.alt { background: var(--night); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  h2 { margin: 0 0 14px; font: 800 clamp(30px, 4vw, 44px)/1.1 var(--sans); letter-spacing: -1.2px; color: var(--white); }
+  .sub { color: var(--muted); font-size: 18px; max-width: 40em; margin: 0 0 40px; }
+
+  /* before / after */
+  .versus { display: grid; grid-template-columns: 1fr auto 1fr; gap: 28px; align-items: stretch; }
+  @media (max-width: 800px) { .versus { grid-template-columns: 1fr; } .versus .arrow { transform: rotate(90deg); justify-self: center; } }
+  .box { border: 1px solid var(--line); background: var(--panel); padding: 26px; }
+  .box h3 { margin: 0 0 16px; font: 700 13px var(--mono); letter-spacing: 2px; text-transform: uppercase; }
+  .before h3 { color: var(--coral); } .after h3 { color: var(--mint); }
+  .box ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .box li { display: flex; gap: 10px; color: var(--muted); }
+  .box li::before { font-family: var(--mono); flex: none; }
+  .before li::before { content: "×"; color: var(--coral); }
+  .after li::before { content: "✓"; color: var(--mint); }
+  .arrow { align-self: center; font: 800 34px var(--mono); color: var(--faint); }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  .feat { border: 1px solid var(--line); background: var(--panel); padding: 22px; transition: transform .2s, border-color .2s; }
+  .feat:hover { transform: translateY(-3px); border-color: var(--faint); }
+  .feat .ico { font: 700 20px var(--mono); width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid; margin-bottom: 14px; }
+  .feat h3 { margin: 0 0 6px; color: var(--white); font: 700 17px var(--sans); }
+  .feat p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  /* screenshots */
+  .shots { display: flex; gap: 22px; justify-content: center; flex-wrap: wrap; align-items: flex-start; }
+  .win { background: var(--night); border: 1px solid var(--line); box-shadow: 0 30px 70px rgba(0,0,0,.45); }
+  .win.light { background: #e1e2e7; border-color: #c4c8da; }
+  .win .bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font: 11px var(--mono); color: var(--dim); border-bottom: 1px solid var(--line); }
+  .win.light .bar { border-color: #c4c8da; color: #6172b0; }
+  .win .bar i { margin-left: auto; letter-spacing: 8px; font-style: normal; }
+  .win img { display: block; width: 100%; height: auto; }
+  .shots figure { margin: 0; flex: 0 1 300px; min-width: 0; }
+  @media (max-width: 700px) { .shots figure { flex-basis: 100%; max-width: 320px; } }
+  .shots figcaption { margin-top: 10px; text-align: center; font: 12px var(--mono); color: var(--dim); }
+  @media (min-width: 900px) { .shots figure:nth-child(2) { transform: translateY(-24px); } }
+
+  /* tray legend */
+  .legend { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-top: 8px; }
+  @media (max-width: 900px) { .legend { grid-template-columns: repeat(3, 1fr); } }
+  .legend div { text-align: center; padding: 18px 6px; border: 1px solid var(--line); background: var(--panel); }
+  .legend img { width: 72px; height: auto; display: block; margin: 0 auto 10px; }
+  .legend b { display: block; font: 700 12px var(--mono); color: var(--text); }
+  .legend span { font: 11px var(--mono); color: var(--dim); }
+
+  /* steps */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; counter-reset: s; }
+  @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+  .step { border: 1px solid var(--line); padding: 24px; background: var(--panel); counter-increment: s; position: relative; }
+  .step::before { content: "0" counter(s); font: 700 13px var(--mono); color: var(--blue); }
+  .step h3 { margin: 8px 0 6px; color: var(--white); font: 700 18px var(--sans); }
+  .step p { margin: 0; color: var(--muted); font-size: 15px; }
+  .smart { margin-top: 18px; padding: 14px 16px; border: 1px dashed var(--faint); font: 13px var(--mono); color: var(--dim); }
+
+  /* final call */
+  .final { text-align: center; padding: 96px 0 88px; background: radial-gradient(ellipse at 50% 120%, rgba(122,162,247,.18), transparent 60%); }
+  .final .mole { width: 160px; height: 76px; margin-bottom: 18px; }
+  .final .cta { justify-content: center; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0; font: 12px var(--mono); color: var(--dim); }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; }
+  footer a { color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<!-- Each .mole svg gets the mark (docs/brand/svg/logos/molehill-mark-tokyo-blue.svg)
+     drawn in by the script at the end, split into parts that can move. -->
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><svg viewBox="2 30 60 28" class="mole" style="--delay:.05s" aria-hidden="true"></svg>molehill</a>
+    <div class="links">
+      <a href="#why">Why</a>
+      <a href="#features">Features</a>
+      <a href="#start">Get started</a>
+      <a class="gh" href="https://github.com/giorgobiani/molehill">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">Free · Open source · Windows 10 &amp; 11</div>
+      <h1>One app.<br><span>All your VPNs.</span></h1>
+      <p class="lede">
+        Your company's <b>Cisco AnyConnect</b>, a client's <b>FortiGate</b>, a <b>GlobalProtect</b> portal
+        and your own <b>OpenVPN</b>, side by side in one small window. No more juggling four clients.
+      </p>
+      <div class="cta">
+        <a class="btn primary download" href="https://github.com/giorgobiani/molehill/releases/latest">⤓ Download for Windows <small class="ver"></small></a>
+        <a class="btn" href="https://github.com/giorgobiani/molehill">★ Source on GitHub</a>
+      </div>
+      <div class="meta"><span>MIT licensed</span><span>Installs what it needs</span><span>Updates itself</span></div>
+    </div>
+
+    <div class="play" aria-label="A preview: flip the switches">
+      <div class="stage"><svg class="mole" viewBox="2 30 60 28" style="--delay:.35s" role="img" aria-label="The Molehill mole"></svg></div>
+      <div class="status" aria-live="polite">All tunnels down. <b>Flip one on.</b></div>
+      <div class="tunnels">
+        <div class="tunnel" data-name="Work"><span class="tag" style="color:var(--blue)">CISCO</span><span class="name"><b>Work</b><i>vpn.company.com</i></span><span class="switch"></span></div>
+        <div class="tunnel" data-name="Client"><span class="tag" style="color:var(--mint)">FORTI</span><span class="name"><b>Client project</b><i>fortigate.client.io:10443</i></span><span class="switch"></span></div>
+        <div class="tunnel" data-name="Partner"><span class="tag" style="color:var(--violet)">GP</span><span class="name"><b>Partner portal</b><i>gp.partner.net</i></span><span class="switch"></span></div>
+        <div class="tunnel" data-name="Home"><span class="tag" style="color:var(--amber)">OVPN</span><span class="name"><b>Home lab</b><i>home.example.net:1194</i></span><span class="switch"></span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="why" class="alt">
+  <div class="wrap">
+    <h2>Fewer clients. Less faff.</h2>
+    <p class="sub">Every VPN vendor wants its own app on your PC. Molehill speaks all four protocols and gets out of your way.</p>
+    <div class="versus">
+      <div class="box before">
+        <h3>Before</h3>
+        <ul>
+          <li>Four VPN clients, four tray icons, four update nags</li>
+          <li>Only one can be connected at a time, or they fight over the network</li>
+          <li>Hunting down installers and the right versions for every one</li>
+          <li>Typing the same password again, every single morning</li>
+        </ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="box after">
+        <h3>With Molehill</h3>
+        <ul>
+          <li>One small app and one tray icon whose colour tells you what's up</li>
+          <li>Several VPNs connected at once, each with its own switch</li>
+          <li>The engines are installed, verified and kept up to date for you</li>
+          <li>Passwords saved safely in Windows; only the 2FA code is asked</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Everything sign-in throws at you</h2>
+    <p class="sub">Group lists, SMS codes, authenticator apps, browser SSO, untrusted certificates, client certificates. Molehill handles them right where you are.</p>
+    <div class="grid">
+      <div class="feat"><div class="ico" style="color:var(--blue)">⇄</div><h3>Several VPNs at once</h3><p>Work, client and home can all be up together. Each connection has its own switch; one master switch turns them all off.</p></div>
+      <div class="feat"><div class="ico" style="color:var(--amber)">#</div><h3>Sign-in on the card</h3><p>Whatever the server asks (a group, an SMS or authenticator code, a FortiToken push) appears right on the connection, filled in where it can be.</p></div>
+      <div class="feat"><div class="ico" style="color:var(--violet)">↗</div><h3>Browser SSO</h3><p>Microsoft Entra, Okta, Google: the company sign-in page opens in your own browser and hands the session back to Molehill.</p></div>
+      <div class="feat"><div class="ico" style="color:var(--mint)">✓</div><h3>Passwords remembered safely</h3><p>Stored in Windows Credential Manager, never in plain files. A mistyped code is never mistaken for a wrong password.</p></div>
+      <div class="feat"><div class="ico" style="color:var(--cyan)">⚿</div><h3>Certificates, handled</h3><p>Trust a company's own server certificate once, pinned from then on. Servers that want your client certificate get it from the Windows store.</p></div>
+      <div class="feat"><div class="ico" style="color:var(--coral)">↻</div><h3>Keeps itself current</h3><p>OpenVPN and OpenConnect are installed and updated for you, and Molehill tells you when there's a new version of itself.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>Small, flat and quiet</h2>
+    <p class="sub">A Tokyo Night look borrowed from Omarchy, in dark or light, following your Windows theme. Drag connections into your order; close the window and the tunnels stay up.</p>
+    <div class="shots">
+      <figure><div class="win"><div class="bar">Molehill<i>– ×</i></div><img src="screenshots/list.png" alt="Molehill's list: one VPN connected, one asking for a password"></div><figcaption>Several tunnels, one window</figcaption></figure>
+      <figure><div class="win"><div class="bar">Molehill<i>– ×</i></div><img src="screenshots/cisco-prompts.png" alt="A Cisco login form and a certificate prompt on the cards"></div><figcaption>Sign-in right on the card</figcaption></figure>
+      <figure><div class="win light"><div class="bar">Molehill<i>– ×</i></div><img src="screenshots/light-list.png" alt="Molehill in the light theme"></div><figcaption>Light, when Windows is</figcaption></figure>
+    </div>
+
+    <h2 style="margin-top:84px">The mole tells you</h2>
+    <p class="sub">One look at the tray, or the dot on the taskbar button, and you know where you stand.</p>
+    <div class="legend">
+      <div><img src="brand/png/logos/molehill-mark-tokyo-blue.png" alt=""><b>Idle</b><span>nothing connected</span></div>
+      <div><img src="brand/png/logos/molehill-mark-amber.png" alt=""><b>Connecting</b><span>signing in</span></div>
+      <div><img src="brand/png/logos/molehill-mark-mint.png" alt=""><b>Connected</b><span>one VPN up</span></div>
+      <div><img src="brand/png/logos/molehill-mark-violet.png" alt=""><b>Several</b><span>more than one up</span></div>
+      <div><img src="brand/png/logos/molehill-mark-coral.png" alt=""><b>Failed</b><span>a connection failed</span></div>
+      <div><img src="brand/png/logos/molehill-mark-dark-mono.png" alt=""><b>Offline</b><span>service stopped</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Up and tunnelling in a minute</h2>
+    <p class="sub">No prerequisites to hunt for.</p>
+    <div class="steps">
+      <div class="step"><h3>Download &amp; install</h3><p>Run the installer. It sets up Molehill and its small background service.</p></div>
+      <div class="step"><h3>Add a connection</h3><p>Pick the protocol, type the server address your IT gave you. For OpenVPN, choose the <span class="mono">.ovpn</span> file.</p></div>
+      <div class="step"><h3>Flip the switch</h3><p>Sign in on the card. Molehill installs the VPN engine the first time it's needed.</p></div>
+    </div>
+    <div class="smart">Windows may say "Windows protected your PC" because the installer isn't code-signed yet. Click <b>More info → Run anyway</b>. The source and every build are on GitHub.</div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <svg class="mole" viewBox="2 30 60 28" aria-hidden="true"></svg>
+    <h2>Dig in.</h2>
+    <p class="sub" style="margin:0 auto 30px">Free and open source, for anyone who needs more than one VPN.</p>
+    <div class="cta">
+      <a class="btn primary download" href="https://github.com/giorgobiani/molehill/releases/latest">⤓ Download for Windows <small class="ver"></small></a>
+      <a class="btn" href="https://github.com/giorgobiani/molehill/issues">Report an issue</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Molehill · MIT licensed · Made with Rust and Slint</span>
+    <span><a href="https://github.com/giorgobiani/molehill">GitHub</a> · <a href="https://github.com/giorgobiani/molehill/releases">Releases</a> · <a href="https://github.com/giorgobiani/molehill/blob/main/CONTRIBUTING.md">Contributing</a></span>
+  </div>
+</footer>
+
+<script>
+  // The mole, in parts that can move (same shapes as the brand's mark).
+  document.querySelectorAll('svg.mole').forEach((svg, n) => {
+    svg.innerHTML = `
+      <defs><clipPath id="ground-${n}"><rect x="0" y="20" width="64" height="36"/></clipPath></defs>
+      <g class="hill">
+        <path d="M7 56 A25 25 0 0 1 57 56 Z" fill="#F4F4F8"/>
+        <path class="tint" d="M14 56 A18 18 0 0 1 50 56 Z"/>
+        <path d="M21 56 A11 13 0 0 1 43 56 Z" fill="#414868"/>
+        <path d="M25 56 A7 9 0 0 1 39 56 Z" fill="#1A1B26"/>
+        <g clip-path="url(#ground-${n})"><g class="rise"><g class="bob">
+          <g class="look"><circle class="eye" cx="30" cy="49" r="2.15" fill="#F4F4F8"/><circle class="eye" cx="37" cy="49" r="2.15" fill="#F4F4F8"/></g>
+          <g class="nose"><ellipse cx="43.5" cy="49.8" rx="3.6" ry="2.8" transform="rotate(-25 43.5 49.8)" fill="#FF9E8A"/><circle cx="44.8" cy="48.7" r=".7" fill="#FFF4EF"/></g>
+        </g></g></g>
+        <path d="M2 56 Q8 51 14 56 L14 58 L2 58 Z M50 56 Q56 51 62 56 L62 58 L50 58 Z" fill="#C0CAF5"/>
+      </g>`;
+  });
+  const moles = [...document.querySelectorAll('svg.mole')];
+
+  // Up it pops when it comes into view.
+  const seen = new IntersectionObserver(entries => entries.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add('awake'); seen.unobserve(e.target); }
+  }));
+  moles.forEach(m => seen.observe(m));
+
+  // Its eyes follow the pointer, a little.
+  addEventListener('pointermove', ev => {
+    for (const m of moles) {
+      const r = m.getBoundingClientRect();
+      const dx = ev.clientX - (r.left + r.width * .5), dy = ev.clientY - (r.top + r.height * .65);
+      const d = Math.hypot(dx, dy) || 1, k = Math.min(1, d / 240);
+      m.querySelector('.look').style.transform = `translate(${(dx / d * .9 * k).toFixed(2)}px, ${(dy / d * .6 * k).toFixed(2)}px)`;
+    }
+  }, { passive: true });
+
+  // A happy hop when a tunnel comes up.
+  function hop() {
+    moles.forEach(m => { m.classList.remove('hop'); void m.getBoundingClientRect(); m.classList.add('hop'); });
+  }
+
+  // The playground: the mole's colour follows the tunnels, like the tray icon.
+  const tunnels = [...document.querySelectorAll('.tunnel')];
+  const status = document.querySelector('.status');
+  const root = document.documentElement;
+  function update() {
+    const on = tunnels.filter(t => t.classList.contains('on'));
+    const busy = tunnels.filter(t => t.classList.contains('busy'));
+    let tint = '--blue', text = 'All tunnels down. <b>Flip one on.</b>';
+    if (busy.length) { tint = '--amber'; text = `Connecting <b>${busy[0].dataset.name}…</b>`; }
+    else if (on.length > 1) { tint = '--violet'; text = `<b>${on.length} tunnels up</b>, side by side.`; }
+    else if (on.length === 1) { tint = '--mint'; text = `Connected to <b>${on[0].dataset.name}</b>. Try another.`; }
+    root.style.setProperty('--tint', `var(${tint})`);
+    status.innerHTML = text;
+  }
+  tunnels.forEach(t => t.addEventListener('click', () => {
+    if (t.classList.contains('busy')) return;
+    if (t.classList.contains('on')) { t.classList.remove('on'); t.querySelector('i').textContent = t.dataset.addr; update(); return; }
+    t.dataset.addr = t.querySelector('i').textContent;
+    t.classList.add('busy'); t.querySelector('i').textContent = 'Signing in…'; update();
+    setTimeout(() => { t.classList.replace('busy', 'on'); t.querySelector('i').textContent = 'Connected · 10.8.0.' + (2 + tunnels.indexOf(t)); update(); hop(); }, 900);
+  }));
+
+  // The download buttons go straight to the latest installer when GitHub says which.
+  fetch('https://api.github.com/repos/giorgobiani/molehill/releases/latest')
+    .then(r => r.ok ? r.json() : null)
+    .then(rel => {
+      const exe = rel && rel.assets.find(a => /^molehill-setup-.*\.exe$/.test(a.name));
+      if (!exe) return;
+      document.querySelectorAll('.download').forEach(a => a.href = exe.browser_download_url);
+      document.querySelectorAll('.ver').forEach(s => s.textContent = rel.tag_name);
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

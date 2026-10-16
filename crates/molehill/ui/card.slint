@@ -120,7 +120,11 @@ export component ConnectionCard inherits Rectangle {
             spacing: 10px;
             VerticalLayout {
                 alignment: center;
-                Badge { text: root.item.tag; tint: root.item.state == "on" ? Theme.green : Theme.accent; }
+                // Each protocol its own colour, as on the website.
+                Badge {
+                    text: root.item.tag;
+                    tint: root.item.tag == "CISCO" ? Theme.accent : root.item.tag == "FORTI" ? Theme.green : root.item.tag == "GP" ? Theme.violet : Theme.yellow;
+                }
             }
             VerticalLayout {
                 alignment: center;
