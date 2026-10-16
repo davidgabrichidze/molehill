@@ -299,12 +299,13 @@ export component TextArea inherits Rectangle {
 export component Select inherits Rectangle {
     in property <[string]> model;
     in-out property <int> current-index;
+    in property <bool> enabled: true;
     callback selected(string);
 
     height: 28px;
     background: Theme.field;
     border-width: 1px;
-    border-color: ta.has-hover ? Theme.muted : Theme.border;
+    border-color: ta.has-hover && root.enabled ? Theme.muted : Theme.border;
     border-radius: Theme.radius;
 
     HorizontalLayout {
@@ -313,7 +314,7 @@ export component Select inherits Rectangle {
         spacing: 6px;
         Text {
             text: root.model[root.current-index];
-            color: Theme.text;
+            color: root.enabled ? Theme.text : Theme.muted;
             font-family: Theme.mono;
             font-size: 12px;
             vertical-alignment: center;
@@ -321,7 +322,7 @@ export component Select inherits Rectangle {
             overflow: elide;
         }
         Text {
-            text: "▾";
+            text: root.enabled ? "▾" : "";
             color: Theme.muted;
             font-size: 11px;
             vertical-alignment: center;
@@ -329,6 +330,7 @@ export component Select inherits Rectangle {
     }
 
     ta := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { popup.show(); }
     }

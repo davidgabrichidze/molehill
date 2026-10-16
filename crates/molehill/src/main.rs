@@ -600,7 +600,7 @@ impl App {
         ui.set_form_is_new(p.is_none());
         ui.set_form_error("".into());
         ui.set_form_name(p.map(|p| p.name.clone()).unwrap_or_default().into());
-        let proto = p.map(|p| p.protocol).unwrap_or(Protocol::OpenVpn);
+        let proto = p.map(|p| p.protocol).unwrap_or(Protocol::AnyConnect);
         ui.set_form_protocol(Protocol::ALL.iter().position(|x| *x == proto).unwrap_or(0) as i32);
         ui.set_form_gateway(p.and_then(|p| p.gateway.clone()).unwrap_or_default().into());
         ui.set_form_group(p.and_then(|p| p.group.clone()).unwrap_or_default().into());
