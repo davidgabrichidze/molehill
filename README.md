@@ -7,6 +7,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/giorgobiani/molehill/releases/latest"><img src="https://img.shields.io/github/v/release/giorgobiani/molehill?style=flat-square&color=7aa2f7&labelColor=1a1b26&label=release" alt="Latest release"></a>
+  <a href="https://github.com/giorgobiani/molehill/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/giorgobiani/molehill/ci.yml?branch=main&style=flat-square&labelColor=1a1b26&label=tests" alt="Tests"></a>
+  <a href="https://github.com/giorgobiani/molehill/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/giorgobiani/molehill/release.yml?style=flat-square&labelColor=1a1b26&label=release%20build" alt="Release build"></a>
+  <a href="https://github.com/giorgobiani/molehill/releases"><img src="https://img.shields.io/github/downloads/giorgobiani/molehill/total?style=flat-square&color=9ece6a&labelColor=1a1b26" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/giorgobiani/molehill?style=flat-square&color=bb9af7&labelColor=1a1b26" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-7dcfff?style=flat-square&labelColor=1a1b26" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/rust-2024%20edition-e0af68?style=flat-square&labelColor=1a1b26&logo=rust" alt="Rust 2024">
+</p>
+
+<p align="center">
   <b>One Windows VPN client for OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.</b><br>
   Several tunnels at once, inline sign-in prompts, saved passwords, browser SSO,<br>
   and the engines it needs installed and kept up to date for you.
