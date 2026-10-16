@@ -169,6 +169,17 @@ fn main() {
     ui.set_form_fetch_info("fetched · server vpn.example.com:1194".into());
     save(&main_window, size, &out.join("editor-server.png"));
 
+    // Light theme (Tokyo Night Day).
+    ui.global::<Theme>().set_dark(false);
+    ui.set_page(Page::List);
+    ui.set_connections(ModelRc::new(VecModel::from(vec![on.clone(), off.clone()])));
+    ui.set_summary("Connected to Acme Corp".into());
+    ui.set_any_busy(false);
+    save(&main_window, size, &out.join("light-list.png"));
+    ui.set_page(Page::Editor);
+    save(&main_window, size, &out.join("light-editor.png"));
+    ui.global::<Theme>().set_dark(true);
+
     // Tray menu.
     let menu = TrayMenu::new().unwrap();
     menu.show().unwrap();

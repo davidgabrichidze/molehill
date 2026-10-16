@@ -63,9 +63,14 @@ export component ConnectionCard inherits Rectangle {
     // Typing breaks the bindings above, so a new prompt (a retry after a
     // wrong password, say) refreshes them by hand.
     property <int> seen-prompt;
+    // A new prompt: ask the list to bring this card into view.
+    callback prompt-shown();
     changed item => {
         if root.item.prompt-id != root.seen-prompt {
             root.seen-prompt = root.item.prompt-id;
+            if root.item.prompt-kind != "" {
+                root.prompt-shown();
+            }
             root.user = root.item.prompt-username;
             root.secret = "";
             root.remember = root.item.remember;
@@ -84,9 +89,18 @@ export component ConnectionCard inherits Rectangle {
         root.secret = "";
     }
 
-    background: Theme.surface;
+    // Dragging by the grip moves an outline of the card with the pointer;
+    // on release the list moves the card by whole cards. (The card itself
+    // stays put: its layout must be its direct child to size correctly
+    // around wrapped text.)
+    callback reorder(int);
+    out property <bool> dragging: grip.pressed;
+    property <length> last-dy;
+    property <length> drag-dy: grip.pressed ? root.last-dy : 0px;
+
+    background: root.dragging ? Theme.surface-hover : Theme.surface;
     border-width: 1px;
-    border-color: root.item.prompt-kind != "" ? Theme.accent
+    border-color: root.dragging ? Theme.accent : root.item.prompt-kind != "" ? Theme.accent
         : root.item.state == "on" ? Theme.green.transparentize(0.5) : Theme.border;
     animate border-color { duration: 200ms; }
 
@@ -271,5 +285,42 @@ export component ConnectionCard inherits Rectangle {
                 Btn { text: "Trust and connect"; kind: "primary"; clicked => { root.submit-text("trust"); } }
             }
         }
+    }
+
+    if grip.has-hover || grip.pressed: Text {
+        x: 2px;
+        width: 8px;
+        height: 100%;
+        text: "⋮";
+        color: Theme.muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // Where the card will go: an outline that follows the pointer.
+    if root.dragging: Rectangle {
+        y: root.drag-dy;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.accent.transparentize(0.85);
+        border-width: 1px;
+        border-color: Theme.accent;
+    }
+
+    // The grip: the card's left edge, dotted on hover.
+    grip := TouchArea {
+        x: 0;
+        width: 10px;
+        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.last-dy = 0;
+            } else if e.kind == PointerEventKind.up {
+                root.reorder(round(root.last-dy / (root.height + 6px)));
+                root.last-dy = 0;
+            }
+        }
+        moved => { root.last-dy = self.mouse-y - self.pressed-y; }
     }
 }

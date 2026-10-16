@@ -27,3 +27,9 @@ pub fn service_dir() -> PathBuf {
     let base = std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
     base.join("Molehill")
 }
+
+/// Where the OpenConnect installer puts it (needed by both the service and,
+/// for client-certificate sign-ins, the app).
+pub fn openconnect_dir() -> Option<PathBuf> {
+    [r"C:\Program Files\OpenConnect"].iter().map(PathBuf::from).find(|d| d.join("openconnect.exe").is_file())
+}

@@ -8,67 +8,17 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use molehill_core::ipc::{FieldKind, FormField};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthRequest {
-    /// OpenConnect's install directory (holds libopenconnect-5.dll).
-    pub dir: PathBuf,
-    pub protocol: String,
-    pub server: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub group: Option<String>,
-    pub pin: Option<String>,
-    /// Fortinet / GlobalProtect: browser SSO (SAML) instead of the login form.
-    #[serde(default)]
-    pub sso: bool,
-    /// The password is a GlobalProtect SAML cookie, not the user's password.
-    #[serde(default)]
-    pub saml_login: bool,
-}
+pub use molehill_core::ocauth::{AuthRequest, AuthResult, HelperAnswer, HelperEvent};
 
 /// What `authenticate` came to.
 enum Next {
     Done(AuthResult),
     /// Sign in again with this request (GlobalProtect, after the browser).
     Again(AuthRequest),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AuthResult {
-    pub cookie: String,
-    pub connect_url: String,
-    /// `--resolve host:ip` so the tunnel doesn't look the name up again.
-    pub resolve: Option<String>,
-    pub pin: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HelperEvent {
-    Log { line: String },
-    Form { banner: Option<String>, error: Option<String>, fields: Vec<FormField> },
-    TrustCert { pin: String, reason: String },
-    OpenUrl { url: String },
-    /// The saved password was filled in and the server rejected it.
-    PasswordRejected,
-    Done(AuthResult),
-    Failed { message: String },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HelperAnswer {
-    Form { values: Vec<(String, String)> },
-    Trust { accept: bool },
-    /// GlobalProtect SSO: the `globalprotectcallback:` URL the browser opened.
-    Callback { url: String },
-    Cancel,
 }
 
 // ── libopenconnect ABI (openconnect.h, API 5.x) ──────────────────────────
@@ -148,6 +98,7 @@ struct Api {
     get_connect_url: unsafe extern "C" fn(Vpn) -> *const c_char,
     get_peer_cert_hash: unsafe extern "C" fn(Vpn) -> *const c_char,
     get_port: unsafe extern "C" fn(Vpn) -> c_int,
+    set_client_cert: unsafe extern "C" fn(Vpn, *const c_char, *const c_char) -> c_int,
     set_option_value: unsafe extern "C" fn(*mut OcFormOpt, *const c_char) -> c_int,
     set_external_browser_callback: Option<unsafe extern "C" fn(Vpn, Option<BrowserCb>) -> c_int>,
 }
@@ -178,6 +129,7 @@ impl Api {
             get_connect_url: sym!("openconnect_get_connect_url"),
             get_peer_cert_hash: sym!("openconnect_get_peer_cert_hash"),
             get_port: sym!("openconnect_get_port"),
+            set_client_cert: sym!("openconnect_set_client_cert"),
             set_option_value: sym!("openconnect_set_option_value"),
             set_external_browser_callback: unsafe { lib.get(b"openconnect_set_external_browser_callback\0") }.ok().map(|s| *s),
             _lib: lib,
@@ -224,6 +176,9 @@ struct Ctx {
     /// Selects the user answered in this sign-in (by field name), so the form
     /// the server sends back after a group change doesn't ask again.
     picked: std::collections::HashSet<String>,
+    /// What the user typed into a form whose group they changed: the server
+    /// answers a group change with a fresh form, which gets these back.
+    carry: Vec<(String, String)>,
     /// The server sent a SAML form while in password mode.
     sso_needed: bool,
     last_error: Option<String>,
@@ -420,6 +375,26 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         })
         .collect();
 
+    // The fresh form after the user changed group: put back what they had
+    // typed, and send it if that fills every field.
+    if !ctx.carry.is_empty() && error.is_none() {
+        let carry = std::mem::take(&mut ctx.carry);
+        let mut complete = true;
+        for (i, &op) in opts.iter().enumerate() {
+            if infos[i].kind == FieldKind::Select {
+                continue;
+            }
+            match carry.iter().find(|(n, _)| *n == infos[i].name) {
+                Some((_, v)) => ctx.set(op, v),
+                None => complete = false,
+            }
+        }
+        if complete {
+            emit(&HelperEvent::Log { line: format!("Server form \"{auth_id}\" for the new group: filled in with what you typed") });
+            return OC_FORM_RESULT_OK;
+        }
+    }
+
     let back_to_login = ctx.password_form.as_deref() == Some(auth_id.as_str());
     if !back_to_login && ctx.password_form.is_some() {
         ctx.password_accepted = true;
@@ -458,7 +433,7 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     }
     emit(&HelperEvent::Log {
         line: format!(
-            "Server form \"{}\" ({} {}): {} visible field(s) [{}], all fields [{}]{}{}",
+            "Server form \"{}\" ({} {}): {} visible field(s) [{}], all fields [{}]{}{}{}",
             auth_id,
             cstr(form.method).unwrap_or_default(),
             cstr(form.action).unwrap_or_default(),
@@ -466,6 +441,7 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
             infos.iter().map(|f| format!("{}:{:?}", f.name, f.kind)).collect::<Vec<_>>().join(", "),
             all.join(", "),
             cstr(form.message).map(|m| format!(", message: {m}")).unwrap_or_default(),
+            error.as_deref().map(|e| format!(", error: {e}")).unwrap_or_default(),
             if plan.auto_submit { ", filled in automatically" } else { ", asking you" }
         ),
     });
@@ -518,6 +494,18 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
                     let choices = select_choices(form.authgroup_opt);
                     if let Some(c) = choices.iter().position(|(n, _)| n == value)
                         && c as c_int != form.authgroup_selection {
+                            // Keep what was typed (and what Molehill filled) for the
+                            // new form, so the user doesn't type it all again.
+                            ctx.carry = opts
+                                .iter()
+                                .enumerate()
+                                .filter(|(j, _)| infos[*j].kind != FieldKind::Select)
+                                .filter_map(|(j, &o)| {
+                                    let typed = values.iter().find(|(n, _)| *n == infos[j].name).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
+                                    let current = cstr(unsafe { (*o).value });
+                                    typed.or(current).map(|v| (infos[j].name.clone(), v))
+                                })
+                                .collect();
                             ctx.set(op, value);
                             return OC_FORM_RESULT_NEWGROUP;
                         }
@@ -711,6 +699,7 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         probing: false,
         probed: false,
         picked: Default::default(),
+        carry: Vec::new(),
         sso_needed: false,
         last_error: None,
     }));
@@ -734,6 +723,15 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         }
         if unsafe { (c.api.parse_url)(vpn, server.as_ptr()) } != 0 {
             bail!("“{}” isn't a valid server address", c.req.server);
+        }
+        // A client certificate from the Windows store, for servers that ask
+        // for one along with the password.
+        if let Some(cert) = c.req.cert.as_deref() {
+            let key = c.req.key.clone().unwrap_or_else(|| molehill_core::ocauth::key_for_cert(cert));
+            let (cert_c, key_c) = (cstring(cert), cstring(&key));
+            if unsafe { (c.api.set_client_cert)(vpn, cert_c.as_ptr(), key_c.as_ptr()) } != 0 {
+                bail!("The client certificate couldn't be loaded");
+            }
         }
         if let Some(set_browser) = c.api.set_external_browser_callback {
             unsafe { set_browser(vpn, Some(on_browser)) };

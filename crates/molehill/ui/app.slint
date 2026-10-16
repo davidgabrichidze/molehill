@@ -57,15 +57,14 @@ component Field inherits VerticalLayout {
 
 export component AppWindow inherits Window {
     title: "Molehill";
-    icon: root.app-icon;
     background: Theme.bg;
     default-font-family: Theme.mono;
     default-font-size: 12px;
-    // Fixed size (close and minimize only); keep in sync with platform.rs.
+    // Fixed width, height up to you (no maximize); keep in sync with platform.rs.
     width: 380px;
-    height: 560px;
+    min-height: 420px;
+    preferred-height: 560px;
 
-    in property <image> app-icon;
     in-out property <Page> page: Page.list;
 
     // ── list ────────────────────────────────────────────────────────
@@ -73,6 +72,8 @@ export component AppWindow inherits Window {
     in property <string> summary: "All tunnels down";
     in property <bool> any-on;
     in property <bool> any-busy;
+    // The mark's middle arch, by state (same as the tray icon; set by the app).
+    in property <color> mark-tint: Theme.accent;
     in property <bool> locked;
     in property <bool> service-online;
     in property <string> notice;
@@ -89,6 +90,11 @@ export component AppWindow inherits Window {
     callback submit-form(string, int);
     callback new-connection();
     callback open-components();
+    // Drag a card by whole cards up (negative) or down.
+    callback reorder(string, int);
+    // "System" | "Light" | "Dark"; clicking cycles it.
+    in property <string> theme-label: "System";
+    callback cycle-theme();
     // A newer Molehill ("" when up to date).
     in property <string> app-update;
     in property <bool> app-update-busy;
@@ -107,6 +113,9 @@ export component AppWindow inherits Window {
     in-out property <bool> form-remember;
     // Fortinet / GlobalProtect: browser SSO instead of username / password.
     in-out property <bool> form-sso;
+    // "None" first, then the certificates in the user's Windows store.
+    in property <[string]> form-cert-options: ["None"];
+    in-out property <int> form-cert-index;
     in-out property <string> form-error;
     // 0 = .ovpn file, 1 = Access Server, 2 = manual
     in-out property <int> form-source;
@@ -158,7 +167,7 @@ export component AppWindow inherits Window {
                     Mole {
                         width: 36px;
                         height: 17px;
-                        tint: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.accent;
+                        tint: root.mark-tint;
                     }
                 }
                 VerticalLayout {
@@ -281,12 +290,20 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.connections.length > 0: Scroll {
+            if root.connections.length > 0: list := Scroll {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 6px;
-                    for item in root.connections: ConnectionCard {
+                    for item[i] in root.connections: ConnectionCard {
                         item: item;
+                        // The last card tells the list where the content really ends.
+                        init => { if i == root.connections.length - 1 { list.extent = self.y + self.height; } }
+                        changed y => { if i == root.connections.length - 1 { list.extent = self.y + self.height; } }
+                        changed height => { if i == root.connections.length - 1 { list.extent = self.y + self.height; } }
+                        z: self.dragging ? 1 : 0;
+                        reorder(steps) => { root.reorder(item.id, steps); }
+                        // Height is computed on demand, so it includes the new prompt.
+                        prompt-shown => { list.reveal(self.y, self.height); }
                         locked: root.locked;
                         toggle => { root.toggle(item.id); }
                         edit => { root.edit(item.id); }
@@ -305,6 +322,7 @@ export component AppWindow inherits Window {
                 spacing: 2px;
                 LinkButton { text: "+ New"; clicked => { root.new-connection(); } }
                 LinkButton { text: "Components"; dot: root.components-attention; clicked => { root.open-components(); } }
+                LinkButton { text: (root.theme-label == "Light" ? "☀ " : root.theme-label == "Dark" ? "☾ " : "◐ ") + root.theme-label; clicked => { root.cycle-theme(); } }
                 Rectangle { horizontal-stretch: 1; }
                 VerticalLayout {
                     alignment: center;
@@ -511,6 +529,16 @@ export component AppWindow inherits Window {
                             placeholder: root.form-protocol == 2 ? "Only if your IT gave you one" : "Asked at sign-in, then remembered";
                             text <=> root.form-group;
                         }
+                    }
+
+                    // Some servers want a certificate from Windows' store too.
+                    if root.form-protocol != 0 && !(root.form-protocol >= 2 && root.form-sso): Field {
+                        label: "Client certificate";
+                        Select {
+                            model: root.form-cert-options;
+                            current-index <=> root.form-cert-index;
+                        }
+                        Hint { text: "Only if the server asks for one, along with your password."; }
                     }
 
                     if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {

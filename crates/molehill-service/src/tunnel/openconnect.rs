@@ -32,6 +32,8 @@ pub struct Spec {
     pub group: Option<String>,
     pub pin: Option<String>,
     pub sso: bool,
+    /// Already signed in (by the app, with the user's client certificate).
+    pub auth: Option<Box<AuthResult>>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -119,8 +121,12 @@ impl Session {
     async fn run(&mut self, spec: Spec, cmds: &mut UnboundedReceiver<TunnelCmd>) -> Result<()> {
         self.set(TunnelState::Connecting, "Signing in");
         let dir = components::openconnect_dir().ok_or_else(|| anyhow!("OpenConnect is not installed. Install it from Components."))?;
-        let Some(auth) = self.authenticate(&spec, &dir, cmds).await? else {
-            return Ok(()); // cancelled by the user
+        let auth = match spec.auth.clone() {
+            Some(auth) => *auth,
+            None => match self.authenticate(&spec, &dir, cmds).await? {
+                Some(auth) => auth,
+                None => return Ok(()), // cancelled by the user
+            },
         };
         self.tunnel(&spec, &dir, auth, cmds).await
     }
@@ -153,6 +159,8 @@ impl Session {
             pin: spec.pin.clone(),
             sso: spec.sso,
             saml_login: false,
+            cert: None,
+            key: None,
         };
         send_line(&mut input, &serde_json::to_string(&req)?).await?;
 

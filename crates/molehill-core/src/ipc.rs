@@ -46,6 +46,11 @@ pub enum TunnelSpec {
         /// Fortinet / GlobalProtect: browser SSO (SAML) instead of the login form.
         #[serde(default)]
         sso: bool,
+        /// Signed in already: the app did it, as the user, because the
+        /// server wants the user's client certificate. The service only
+        /// starts the tunnel.
+        #[serde(default)]
+        auth: Option<Box<crate::ocauth::AuthResult>>,
     },
 }
 

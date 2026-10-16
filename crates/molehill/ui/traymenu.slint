@@ -80,6 +80,8 @@ export component TrayMenu inherits Window {
     in property <string> summary;
     in property <bool> any-on;
     in property <bool> any-busy;
+    // The mark's middle arch, by state (same as the tray icon; set by the app).
+    in property <color> mark-tint: Theme.accent;
     callback toggle(string);
     callback open-app();
     callback disconnect-all();
@@ -113,7 +115,7 @@ export component TrayMenu inherits Window {
                         Mole {
                             width: 32px;
                             height: 15px;
-                            tint: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.accent;
+                            tint: root.mark-tint;
                         }
                     }
                     VerticalLayout {

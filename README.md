@@ -59,6 +59,9 @@ flat and square, nothing in the way.
 - **Untrusted certificates, handled.** If Windows doesn't trust the server's
   certificate, Molehill shows its fingerprint and asks once; after that the
   connection is pinned to exactly that certificate.
+- **Client certificates.** For servers that want a certificate from your
+  Windows store along with the password, pick it in the connection's editor;
+  Molehill signs in as you, so Windows lets it use your certificate.
 - **Keeps itself up to date.** When a new Molehill is released, you get a
   Windows notification and an **Update** button; the installer is downloaded,
   checked against its published SHA-256 and run for you.
@@ -66,16 +69,20 @@ flat and square, nothing in the way.
   verified and installed by Molehill. It checks for new versions twice a day
   and offers the update in the app.
 - **Out of the way.** A tray icon that changes colour with the state (blue
-  idle, amber connecting, green connected), its own tray menu to flip tunnels,
-  and closing the window keeps the tunnels up. Live traffic counters,
+  idle, amber connecting, mint for one VPN up, violet for several, coral when
+  one failed), a matching dot on the taskbar button, its own tray menu to flip
+  tunnels, and closing the window keeps the tunnels up. Live traffic counters,
   connected time and a log per tunnel.
+- **Yours to arrange.** Drag connections into the order you want, resize the
+  window's height, and it opens where you left it. Tokyo Night dark or
+  Tokyo Night Day light, following Windows unless you pick one.
 
 ## Supported VPNs
 
 | VPN | Engine | Sign-in |
 |-----|--------|---------|
 | **OpenVPN** | OpenVPN 2.6 (official MSI, DCO / TAP drivers) | A `.ovpn` file, a profile fetched from **OpenVPN Access Server** with your username and password, or a manual setup (address, port, UDP/TCP, CA, tls-auth / tls-crypt). Username & password, certificates, private key passphrase, static and dynamic challenges (OTP), browser SSO (`WEB_AUTH`, `OPEN_URL`, `CR_TEXT`) |
-| **Cisco AnyConnect** / ocserv | OpenConnect | Whatever form the server sends: group list, username, password, second password / OTP, SMS or Microsoft Authenticator codes. Browser SSO. Certificate pinning |
+| **Cisco AnyConnect** / ocserv | OpenConnect | Whatever form the server sends: group list, username, password, second password / OTP, SMS or Microsoft Authenticator codes. Client certificates from the Windows store. Browser SSO. Certificate pinning |
 | **Fortinet** FortiGate | OpenConnect | Username & password, realm, 2FA codes (SMS, email, FortiToken) or FortiToken push. Browser SSO the FortiClient way (redirect to `127.0.0.1:8020`). Certificate pinning |
 | **Palo Alto GlobalProtect** | OpenConnect | Portal, then gateway (chosen for you when there's one, or the one you picked last time). Username & password, 2FA challenges. Browser SSO in your default browser, like `gpauth`. Certificate pinning |
 

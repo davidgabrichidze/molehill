@@ -1,23 +1,33 @@
 import "fonts/JetBrainsMono-Regular.ttf";
 import "fonts/JetBrainsMono-Bold.ttf";
 
-// Tokyo Night, as in Omarchy: flat, square, monospace, hairline borders.
+// Tokyo Night (dark) and Tokyo Night Day (light), as in Omarchy: flat,
+// square, monospace, hairline borders. The app sets `dark` from the Windows
+// app theme, or from the user's choice.
 export global Theme {
-    out property <color> bg: #16161e;
-    // Inputs sit a step darker than the cards they're on.
-    out property <color> field: #13131a;
-    out property <color> surface: #1a1b26;
-    out property <color> surface-hover: #24283b;
-    out property <color> border: #292e42;
-    out property <color> text: #c0caf5;
-    out property <color> muted: #737aa2;
+    in-out property <bool> dark: true;
+
+    out property <color> bg: dark ? #16161e : #e1e2e7;
+    // Inputs sit a step apart from the cards they're on.
+    out property <color> field: dark ? #13131a : #f2f2f6;
+    out property <color> surface: dark ? #1a1b26 : #e9e9ee;
+    out property <color> surface-hover: dark ? #24283b : #d6d8e2;
+    out property <color> border: dark ? #292e42 : #c4c8da;
+    out property <color> text: dark ? #c0caf5 : #3760bf;
+    out property <color> muted: dark ? #737aa2 : #6172b0;
     // Placeholders: clearly not typed text.
-    out property <color> placeholder: #444b6a;
-    out property <color> faint: #3b4261;
-    out property <color> accent: #7aa2f7;
-    out property <color> green: #9ece6a;
-    out property <color> yellow: #e0af68;
-    out property <color> red: #f7768e;
+    out property <color> placeholder: dark ? #444b6a : #a8aecb;
+    out property <color> faint: dark ? #3b4261 : #b4b8cc;
+    out property <color> accent: dark ? #7aa2f7 : #2e7de9;
+    out property <color> green: dark ? #9ece6a : #587539;
+    out property <color> yellow: dark ? #e0af68 : #8c6c3e;
+    out property <color> red: dark ? #f7768e : #f52a65;
+    // Text on an accent-filled button.
+    out property <color> on-accent: dark ? #16161e : #ffffff;
+    // The mark: its white arch and dark tunnel, swapped for the light theme
+    // like the brand's light icon.
+    out property <color> mark-outer: dark ? #f4f4f8 : #ffffff;
+    out property <color> mark-hole: dark ? #1a1b26 : #e1e2e7;
     out property <string> mono: "JetBrains Mono";
     out property <length> radius: 0px;
 }
