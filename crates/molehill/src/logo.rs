@@ -8,7 +8,10 @@
 pub const ACCENT: [u8; 3] = [0x7a, 0xa2, 0xf7];
 pub const GREEN: [u8; 3] = [0x9e, 0xce, 0x6a];
 pub const YELLOW: [u8; 3] = [0xe0, 0xaf, 0x68];
-pub const MUTED: [u8; 3] = [0x41, 0x48, 0x68];
+pub const VIOLET: [u8; 3] = [0xbb, 0x9a, 0xf7];
+pub const CORAL: [u8; 3] = [0xf7, 0x76, 0x8e];
+/// The mono mark's middle arch (service offline).
+pub const WHITE_MARK: [u8; 3] = [0xf4, 0xf4, 0xf8];
 
 const NIGHT: [u8; 3] = [0x1a, 0x1b, 0x26];
 const WHITE: [u8; 3] = [0xf4, 0xf4, 0xf8];
@@ -92,13 +95,6 @@ fn rasterize(size: u32, f: impl Fn(f32, f32) -> Option<[u8; 3]>) -> Vec<u8> {
         }
     }
     out
-}
-
-/// The bare mark, cropped to its drawing (x 2…62, y 30…58) and centred,
-/// for the tray and the in-app header.
-pub fn render(size: u32, tint: [u8; 3]) -> Vec<u8> {
-    // 60 grid units wide; vertically centre the 28-unit-high drawing.
-    rasterize(size, |u, v| mark(2.0 + u * 60.0, 44.0 - 30.0 + v * 60.0, tint))
 }
 
 /// The application icon: the mark on a rounded night tile, like

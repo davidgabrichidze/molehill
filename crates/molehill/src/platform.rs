@@ -11,7 +11,7 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL, DwmSetWindowAttribute,
 };
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
@@ -21,7 +21,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
     SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
     MINMAXINFO, PostMessageW, RegisterWindowMessageW, SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_DPICHANGED, WM_ENDSESSION,
-    WM_GETMINMAXINFO, WM_QUERYENDSESSION, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    WM_GETMINMAXINFO, WM_QUERYENDSESSION, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GetClientRect, GetCursorPos,
+    SM_CYVIRTUALSCREEN, WM_EXITSIZEMOVE, WM_SETTINGCHANGE,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -90,21 +91,72 @@ pub fn style_main(hwnd: HWND) {
                 }
             }
         }
-        dwm(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, 1);
-        dwm(hwnd, DWMWA_CAPTION_COLOR, 0x001e1616);
-        dwm(hwnd, DWMWA_BORDER_COLOR, 0x004d332f);
-        dwm(hwnd, DWMWA_TEXT_COLOR, 0x00f5cac0);
+        let mut dark = true;
+        crate::with_app(|app| dark = app.is_dark());
+        title_bar(hwnd, dark);
         let _ = SetWindowSubclass(hwnd, Some(main_proc), 1, 0);
-        // Close and minimize only: winit owns the window styles, so ask it.
+        // Close and minimize only, height resizable (the width is fixed by
+        // WM_GETMINMAXINFO): winit owns the window styles, so ask it.
         crate::with_app(|app| {
             use slint::winit_030::{WinitWindowAccessor, winit::window::WindowButtons};
             slint::ComponentHandle::window(&app.ui).with_winit_window(|w| {
-                w.set_resizable(false);
+                w.set_resizable(true);
                 w.set_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE);
             });
         });
+        place_main_once(hwnd);
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
+    }
+}
+
+/// Title bar and border in the theme's colours (COLORREF is 0x00BBGGRR).
+pub fn title_bar(hwnd: HWND, dark: bool) {
+    let (caption, border, text) = if dark { (0x001e1616, 0x004d332f, 0x00f5cac0) } else { (0x00e7e2e1, 0x00dac8c4, 0x00bf6037) };
+    dwm(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, dark as u32);
+    dwm(hwnd, DWMWA_CAPTION_COLOR, caption);
+    dwm(hwnd, DWMWA_BORDER_COLOR, border);
+    dwm(hwnd, DWMWA_TEXT_COLOR, text);
+}
+
+/// The main window's HWND, once it exists.
+pub fn main_hwnd(window: &slint::Window) -> Option<HWND> {
+    hwnd(window, MAIN_TITLE)
+}
+
+/// On the first show: where the user left the window, if that spot is still
+/// on a screen, else centred in the work area of the screen under the cursor.
+fn place_main_once(hwnd: HWND) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let (mut pos, mut height) = (None, None);
+    crate::with_app(|app| (pos, height) = app.saved_window());
+    let height = height.unwrap_or(DEFAULT_HEIGHT).max(MIN_HEIGHT);
+    unsafe {
+        let dpi = GetDpiForWindow(hwnd);
+        let Some((w, h)) = outer_size(hwnd, dpi, height) else { return };
+        let on_screen = pos.filter(|&(x, y)| {
+            // The title bar's middle must be on some monitor.
+            let probe = POINT { x: x + w / 2, y: y + 12 };
+            !MonitorFromPoint(probe, MONITOR_DEFAULTTONULL).is_invalid()
+        });
+        let (x, y) = match on_screen {
+            Some(p) => p,
+            None => {
+                let mut cursor = POINT::default();
+                let _ = GetCursorPos(&mut cursor);
+                let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+                let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+                let work = if GetMonitorInfoW(monitor, &mut info).as_bool() { info.rcWork } else { RECT { left: 0, top: 0, right: 1920, bottom: 1080 } };
+                let h = h.min(work.bottom - work.top);
+                (work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2)
+            }
+        };
+        // If this lands on a screen with another scale, WM_DPICHANGED
+        // follows and keeps the logical height.
+        let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
 
@@ -170,8 +222,11 @@ pub fn claim_single_instance() -> bool {
     }
 }
 
-/// The main window's fixed client size in logical pixels (see ui/app.slint).
-const LOGICAL_SIZE: (f64, f64) = (380.0, 560.0);
+/// The main window's client width and smallest height, in logical pixels
+/// (see ui/app.slint), and its height on first start.
+const LOGICAL_WIDTH: f64 = 380.0;
+const MIN_HEIGHT: f64 = 420.0;
+const DEFAULT_HEIGHT: f64 = 560.0;
 
 /// Sent to the main window by a second Molehill instance: show yourself.
 fn show_message() -> u32 {
@@ -179,10 +234,19 @@ fn show_message() -> u32 {
     *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(w!("MolehillShow")) })
 }
 
-/// Outer window size for the fixed logical client size at `dpi`.
-fn outer_size(hwnd: HWND, dpi: u32) -> Option<(i32, i32)> {
+/// The window's client height in logical pixels, right now.
+fn logical_height(hwnd: HWND) -> f64 {
+    let mut r = RECT::default();
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut r);
+        (r.bottom - r.top) as f64 * 96.0 / GetDpiForWindow(hwnd).max(1) as f64
+    }
+}
+
+/// Outer window size for the fixed logical width and `height` at `dpi`.
+fn outer_size(hwnd: HWND, dpi: u32, height: f64) -> Option<(i32, i32)> {
     let k = dpi as f64 / 96.0;
-    let mut rect = RECT { left: 0, top: 0, right: (LOGICAL_SIZE.0 * k).round() as i32, bottom: (LOGICAL_SIZE.1 * k).round() as i32 };
+    let mut rect = RECT { left: 0, top: 0, right: (LOGICAL_WIDTH * k).round() as i32, bottom: (height * k).round() as i32 };
     unsafe {
         let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
         let ex_style = WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32);
@@ -202,20 +266,22 @@ fn outer_size(hwnd: HWND, dpi: u32) -> Option<(i32, i32)> {
 /// exactly where Windows suggests, at the size answered for WM_GETDPISCALEDSIZE.
 unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
     match msg {
+        // Keep the logical height across a scale change; width is fixed.
         WM_GETDPISCALEDSIZE => {
-            if let Some((w, h)) = outer_size(hwnd, wp.0 as u32) {
+            if let Some((w, h)) = outer_size(hwnd, wp.0 as u32, logical_height(hwnd)) {
                 unsafe { *(lp.0 as *mut SIZE) = SIZE { cx: w, cy: h } };
                 return LRESULT(1);
             }
         }
         // winit keeps min/max limits in pixels of the scale it last saw, and
-        // it never sees the scale change below; answer with the fixed size at
-        // the window's current scale instead, always.
+        // it never sees the scale change below; answer at the window's
+        // current scale instead: fixed width, height from MIN_HEIGHT up.
         WM_GETMINMAXINFO => {
-            if let Some((w, h)) = outer_size(hwnd, unsafe { GetDpiForWindow(hwnd) }) {
+            let dpi = unsafe { GetDpiForWindow(hwnd) };
+            if let Some((w, h)) = outer_size(hwnd, dpi, MIN_HEIGHT) {
                 let info = unsafe { &mut *(lp.0 as *mut MINMAXINFO) };
                 info.ptMinTrackSize = POINT { x: w, y: h };
-                info.ptMaxTrackSize = POINT { x: w, y: h };
+                info.ptMaxTrackSize = POINT { x: w, y: unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }.max(h) };
                 return LRESULT(0);
             }
         }
@@ -230,6 +296,22 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
             }
             return LRESULT(0);
+        }
+        // The user finished moving or resizing: remember it for next start.
+        WM_EXITSIZEMOVE => {
+            let mut r = RECT::default();
+            unsafe {
+                let _ = GetWindowRect(hwnd, &mut r);
+            }
+            let height = logical_height(hwnd);
+            crate::with_app(move |app| app.remember_window((r.left, r.top), height));
+        }
+        // Windows' light/dark app theme changed.
+        WM_SETTINGCHANGE if lp.0 != 0 => {
+            let name = unsafe { PCWSTR(lp.0 as *const u16).to_string() }.unwrap_or_default();
+            if name == "ImmersiveColorSet" {
+                crate::with_app(|app| app.apply_theme());
+            }
         }
         // Windows (or the installer, through the Restart Manager) wants us
         // gone; closing the window alone only hides it to the tray.

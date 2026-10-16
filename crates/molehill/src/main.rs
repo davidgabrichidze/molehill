@@ -5,6 +5,7 @@ mod gpcallback;
 mod selfupdate;
 mod logo;
 mod platform;
+mod settings;
 mod tray;
 
 use std::cell::{Cell, OnceCell, RefCell};
@@ -21,7 +22,7 @@ use molehill_core::profile::{self, Profile, ProfileStore, Protocol};
 use molehill_core::setup::{self, ManualOvpn, TlsKeyMode};
 use molehill_core::{ovpn, paths, secrets};
 use slint::{ComponentHandle, Model, ModelRc, SharedPixelBuffer, VecModel};
-use tray::{Tray, TrayAction};
+use tray::{Tray, TrayAction, TrayState};
 
 slint::include_modules!();
 
@@ -65,6 +66,7 @@ struct State {
     app_update_busy: bool,
     /// Version already announced with a notification this session.
     app_update_notified: Option<String>,
+    settings: settings::Settings,
 }
 
 struct App {
@@ -116,7 +118,7 @@ fn main() -> anyhow::Result<()> {
     ui.set_app_icon(slint::Image::from_rgba8(SharedPixelBuffer::clone_from_slice(&px, 64, 64)));
 
     let client = client::start(|ev| on_ui(move |app| app.on_client_event(ev)));
-    let mut state = State::default();
+    let mut state = State { settings: settings::load(), ..Default::default() };
     match ProfileStore::load() {
         Ok(store) => state.store = store,
         Err(e) => {
@@ -147,6 +149,7 @@ fn main() -> anyhow::Result<()> {
         let _ = cell.set(app.clone());
     });
     app.wire_callbacks();
+    app.apply_theme();
     app.refresh_subtitles();
 
     match Tray::new(|action| on_ui(move |app| app.on_tray(action))) {
@@ -180,6 +183,65 @@ fn main() -> anyhow::Result<()> {
 }
 
 impl App {
+    // ── theme, window placement, order ──────────────────────────────
+
+    pub fn is_dark(&self) -> bool {
+        match self.state.borrow().settings.theme {
+            settings::ThemeMode::System => settings::system_prefers_dark(),
+            settings::ThemeMode::Light => false,
+            settings::ThemeMode::Dark => true,
+        }
+    }
+
+    /// Applies the theme to both windows and the title bar.
+    pub fn apply_theme(&self) {
+        let dark = self.is_dark();
+        self.ui.global::<Theme>().set_dark(dark);
+        self.menu.global::<Theme>().set_dark(dark);
+        self.ui.set_theme_label(self.state.borrow().settings.theme.label().into());
+        if let Some(h) = platform::main_hwnd(self.ui.window()) {
+            platform::title_bar(h, dark);
+        }
+    }
+
+    fn cycle_theme(&self) {
+        let mut st = self.state.borrow_mut();
+        st.settings.theme = st.settings.theme.next();
+        settings::save(&st.settings);
+        drop(st);
+        self.apply_theme();
+    }
+
+    pub fn saved_window(&self) -> (Option<(i32, i32)>, Option<f64>) {
+        let st = self.state.borrow();
+        (st.settings.window_pos, st.settings.window_height)
+    }
+
+    pub fn remember_window(&self, pos: (i32, i32), height: f64) {
+        let mut st = self.state.borrow_mut();
+        st.settings.window_pos = Some(pos);
+        st.settings.window_height = Some(height);
+        settings::save(&st.settings);
+    }
+
+    /// Moves a connection by `steps` places (negative is up) and saves the order.
+    fn reorder(&self, id: &str, steps: i32) {
+        let mut st = self.state.borrow_mut();
+        let list = &mut st.store.profiles;
+        let Some(from) = list.iter().position(|p| p.id == id) else { return };
+        let to = (from as i64 + steps as i64).clamp(0, list.len() as i64 - 1) as usize;
+        if to == from {
+            return;
+        }
+        let p = list.remove(from);
+        list.insert(to, p);
+        if let Err(e) = st.store.save() {
+            st.error = Some(format!("Couldn't save the new order: {e:#}"));
+        }
+        drop(st);
+        self.refresh();
+    }
+
     // ── Molehill's own updates ──────────────────────────────────────
 
     fn check_app_update(&self) {
@@ -322,6 +384,10 @@ impl App {
         });
         let a = app.clone();
         ui.on_update_app(move || a().map(|s| s.update_app()).unwrap_or_default());
+        let a = app.clone();
+        ui.on_reorder(move |id, steps| a().map(|s| s.reorder(&id, steps)).unwrap_or_default());
+        let a = app.clone();
+        ui.on_cycle_theme(move || a().map(|s| s.cycle_theme()).unwrap_or_default());
         let a = app.clone();
         ui.on_install_component(move |id| {
             if let Some(s) = a() {
@@ -973,13 +1039,15 @@ impl App {
 
     fn delete_profile(&self) {
         let name = self.ui.get_form_name().to_string();
-        let confirmed = rfd::MessageDialog::new()
+        // A plain Yes/No: custom button labels fall back to OK/Cancel on a
+        // plain Windows message box, which then answers "Ok".
+        let answer = rfd::MessageDialog::new()
             .set_title("Delete connection")
             .set_description(format!("Delete “{name}” and its saved password? This can't be undone."))
             .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::OkCancelCustom("Delete".into(), "Keep".into()))
+            .set_buttons(rfd::MessageButtons::YesNo)
             .show();
-        if confirmed != rfd::MessageDialogResult::Custom("Delete".into()) {
+        if !matches!(answer, rfd::MessageDialogResult::Yes | rfd::MessageDialogResult::Ok) {
             return;
         }
         let mut st = self.state.borrow_mut();
@@ -1022,7 +1090,7 @@ impl App {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
         let mut items = Vec::new();
-        let (mut connected, mut busy) = (Vec::new(), Vec::new());
+        let (mut connected, mut busy, mut failed) = (Vec::new(), Vec::new(), 0usize);
         let mut locked = false;
         for p in &st.store.profiles {
             let t = st.tunnels.get(&p.id);
@@ -1040,9 +1108,15 @@ impl App {
                     }
                     ("busy", if s.detail.is_empty() { format!("{:?}", s.state) } else { s.detail.clone() })
                 }
-                Some(s) if s.state == TunnelState::Failed => ("error", s.detail.clone()),
+                Some(s) if s.state == TunnelState::Failed => {
+                    failed += 1;
+                    ("error", s.detail.clone())
+                }
                 _ => match t.and_then(|t| t.local_error.clone()) {
-                    Some(e) => ("error", e),
+                    Some(e) => {
+                        failed += 1;
+                        ("error", e)
+                    }
                     None => ("off", subtitle),
                 },
             };
@@ -1189,17 +1263,34 @@ impl App {
             .into(),
         );
 
+        // One state for the tray icon and the marks in the window and menu.
+        // Activity wins (connecting shows even while another tunnel is up).
+        let mark = if !st.service_online {
+            TrayState::Offline
+        } else if !busy.is_empty() {
+            TrayState::Connecting
+        } else if connected.len() > 1 {
+            TrayState::ConnectedMany
+        } else if connected.len() == 1 {
+            TrayState::Connected
+        } else if failed > 0 {
+            TrayState::Failed
+        } else {
+            TrayState::Idle
+        };
+        let tint = match mark {
+            TrayState::Idle => logo::ACCENT,
+            TrayState::Connecting => logo::YELLOW,
+            TrayState::Connected => logo::GREEN,
+            TrayState::ConnectedMany => logo::VIOLET,
+            TrayState::Failed => logo::CORAL,
+            TrayState::Offline => logo::WHITE_MARK,
+        };
+        let tint = slint::Color::from_rgb_u8(tint[0], tint[1], tint[2]);
+        self.ui.set_mark_tint(tint);
+        self.menu.set_mark_tint(tint);
         if let Some(tray) = self.tray.borrow().as_ref() {
-            let color = if !connected.is_empty() {
-                logo::GREEN
-            } else if !busy.is_empty() {
-                logo::YELLOW
-            } else if st.service_online {
-                logo::ACCENT
-            } else {
-                logo::MUTED
-            };
-            tray.update(color, &format!("Molehill · {summary}"));
+            tray.update(mark, &format!("Molehill · {summary}"));
         }
         self.menu.set_summary(summary.into());
         self.menu.set_any_on(!connected.is_empty());

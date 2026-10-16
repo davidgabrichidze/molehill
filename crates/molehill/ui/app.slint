@@ -61,9 +61,10 @@ export component AppWindow inherits Window {
     background: Theme.bg;
     default-font-family: Theme.mono;
     default-font-size: 12px;
-    // Fixed size (close and minimize only); keep in sync with platform.rs.
+    // Fixed width, height up to you (no maximize); keep in sync with platform.rs.
     width: 380px;
-    height: 560px;
+    min-height: 420px;
+    preferred-height: 560px;
 
     in property <image> app-icon;
     in-out property <Page> page: Page.list;
@@ -73,6 +74,8 @@ export component AppWindow inherits Window {
     in property <string> summary: "All tunnels down";
     in property <bool> any-on;
     in property <bool> any-busy;
+    // The mark's middle arch, by state (same as the tray icon; set by the app).
+    in property <color> mark-tint: Theme.accent;
     in property <bool> locked;
     in property <bool> service-online;
     in property <string> notice;
@@ -89,6 +92,11 @@ export component AppWindow inherits Window {
     callback submit-form(string, int);
     callback new-connection();
     callback open-components();
+    // Drag a card by whole cards up (negative) or down.
+    callback reorder(string, int);
+    // "System" | "Light" | "Dark"; clicking cycles it.
+    in property <string> theme-label: "System";
+    callback cycle-theme();
     // A newer Molehill ("" when up to date).
     in property <string> app-update;
     in property <bool> app-update-busy;
@@ -158,7 +166,7 @@ export component AppWindow inherits Window {
                     Mole {
                         width: 36px;
                         height: 17px;
-                        tint: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.accent;
+                        tint: root.mark-tint;
                     }
                 }
                 VerticalLayout {
@@ -287,6 +295,8 @@ export component AppWindow inherits Window {
                     spacing: 6px;
                     for item in root.connections: ConnectionCard {
                         item: item;
+                        z: self.dragging ? 1 : 0;
+                        reorder(steps) => { root.reorder(item.id, steps); }
                         locked: root.locked;
                         toggle => { root.toggle(item.id); }
                         edit => { root.edit(item.id); }
@@ -305,6 +315,7 @@ export component AppWindow inherits Window {
                 spacing: 2px;
                 LinkButton { text: "+ New"; clicked => { root.new-connection(); } }
                 LinkButton { text: "Components"; dot: root.components-attention; clicked => { root.open-components(); } }
+                LinkButton { text: (root.theme-label == "Light" ? "☀ " : root.theme-label == "Dark" ? "☾ " : "◐ ") + root.theme-label; clicked => { root.cycle-theme(); } }
                 Rectangle { horizontal-stretch: 1; }
                 VerticalLayout {
                     alignment: center;

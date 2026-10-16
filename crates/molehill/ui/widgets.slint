@@ -25,7 +25,7 @@ export component Btn inherits Rectangle {
         padding-right: 12px;
         Text {
             text: root.text;
-            color: root.kind == "primary" && root.enabled ? Theme.bg : root.kind == "danger" ? Theme.red : Theme.text;
+            color: root.kind == "primary" && root.enabled ? Theme.on-accent : root.kind == "danger" ? Theme.red : Theme.text;
             font-family: Theme.mono;
             font-size: 12px;
             font-weight: root.kind == "primary" ? 700 : 400;
@@ -98,7 +98,7 @@ export component Toggle inherits Rectangle {
         height: 10px;
         y: (parent.height - self.height) / 2;
         x: root.checked ? parent.width - self.width - 4px : 4px;
-        background: root.busy ? Theme.yellow : root.checked ? Theme.bg : (ta.has-hover ? Theme.text : Theme.muted);
+        background: root.busy ? Theme.yellow : root.checked ? Theme.on-accent : (ta.has-hover ? Theme.text : Theme.muted);
         opacity: root.busy ? 0.55 + 0.45 * Math.sin(animation-tick() / 3ms * 1deg) : 1;
         animate x { duration: 140ms; easing: ease-out; }
     }
@@ -392,7 +392,7 @@ export component Check inherits Rectangle {
                 background: root.checked ? Theme.accent : transparent;
                 Text {
                     text: root.checked ? "✓" : "";
-                    color: Theme.bg;
+                    color: Theme.on-accent;
                     font-size: 10px;
                     font-weight: 700;
                     horizontal-alignment: center;
@@ -421,22 +421,47 @@ export component Check inherits Rectangle {
 /// Vertical scrolling for a page, with a hairline position bar instead of
 /// Windows' scroll bar.
 export component Scroll inherits Rectangle {
+    // How far the content can move, and the thumb's size and travel.
+    property <length> range: max(0px, f.content-height - f.height);
+    property <length> thumb: max(24px, root.height * f.height / max(1px, f.content-height));
+    property <length> thumb-y: root.range > 0 ? (- f.content-y) * (root.height - root.thumb) / root.range : 0px;
     f := Flickable {
         width: 100%;
         height: 100%;
+        // Desktop scrolling: the wheel and the bar. Dragging the content
+        // would steal the drag from the cards' reorder grip.
+        interactive: false;
         content-height: max(self.height, content.preferred-height);
         content := VerticalLayout {
-            width: f.width - 8px;
+            width: f.width - 10px;
             alignment: start;
             @children
         }
     }
-    if f.content-height > f.height: Rectangle {
-        x: parent.width - 2px;
-        width: 2px;
-        height: max(20px, f.height * f.height / f.content-height);
-        y: (- f.content-y) * (parent.height - self.height) / max(1px, f.content-height - f.height);
-        background: Theme.faint;
+    if root.range > 0: Rectangle {
+        x: parent.width - 4px;
+        width: 4px;
+        height: root.thumb;
+        y: root.thumb-y;
+        background: track.has-hover || track.pressed ? Theme.muted : Theme.faint;
+    }
+    // The track takes the drag (the thumb moves under the pointer). Grab the
+    // thumb where it was pressed; a press beside it jumps there.
+    track := TouchArea {
+        x: parent.width - 8px;
+        width: 8px;
+        enabled: root.range > 0;
+        property <length> grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                self.grab = self.mouse-y >= root.thumb-y && self.mouse-y <= root.thumb-y + root.thumb ? self.mouse-y - root.thumb-y : root.thumb / 2;
+                root.scroll-to(self.mouse-y - self.grab);
+            }
+        }
+        moved => { root.scroll-to(self.mouse-y - self.grab); }
+    }
+    function scroll-to(thumb-y: length) {
+        f.content-y = - max(0px, min(root.range, thumb-y * root.range / max(1px, root.height - root.thumb)));
     }
 }
 
@@ -445,9 +470,9 @@ export component Scroll inherits Rectangle {
 // middle arch, which follows the VPN state.
 export component Mole inherits Rectangle {
     in property <color> tint: Theme.accent;
-    in property <color> outer: #f4f4f8;
+    in property <color> outer: Theme.mark-outer;
     in property <color> inner: #414868;
-    in property <color> hole: #1a1b26;
+    in property <color> hole: Theme.mark-hole;
     in property <color> sides: #c0caf5;
     in property <color> eyes: #f4f4f8;
     in property <color> nose: #ff9e8a;
