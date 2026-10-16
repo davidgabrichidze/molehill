@@ -3,41 +3,76 @@
 //! Without arguments it runs under the Service Control Manager. For
 //! development: `install`, `uninstall`, or `run` (foreground, needs an
 //! elevated terminal).
+//!
+//! On macOS it runs as a launchd daemon (root) and stops on SIGTERM; the
+//! `.pkg` installs and removes it, so there are no `install`/`uninstall`
+//! commands there.
 
+#[cfg(target_os = "macos")]
+#[path = "compat_macos.rs"]
+mod compat;
+#[cfg(windows)]
+mod components;
+#[cfg(target_os = "macos")]
+#[path = "components_macos.rs"]
 mod components;
 mod fortinet_sso;
 mod gp_sso;
+#[cfg(windows)]
 mod job;
+#[cfg(target_os = "macos")]
+#[path = "job_macos.rs"]
+mod job;
+#[cfg(windows)]
+mod netstats;
+#[cfg(target_os = "macos")]
+#[path = "netstats_macos.rs"]
 mod netstats;
 mod openconnect_auth;
+#[cfg(windows)]
+mod security;
+#[cfg(target_os = "macos")]
+#[path = "security_macos.rs"]
 mod security;
 mod server;
 mod tunnel;
 
+#[cfg(windows)]
 use std::ffi::OsString;
 use std::sync::Arc;
+#[cfg(windows)]
 use std::time::Duration;
 
+#[cfg_attr(not(windows), allow(unused_imports))]
 use anyhow::{Context, Result};
+#[cfg_attr(not(windows), allow(unused_imports))]
 use molehill_core::{SERVICE_NAME, paths};
 use tokio::sync::Notify;
+#[cfg(windows)]
 use windows_service::service::{
     ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
     ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo,
     ServiceStartType, ServiceState, ServiceStatus, ServiceType,
 };
+#[cfg(windows)]
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+#[cfg(windows)]
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+#[cfg(windows)]
 use windows_service::{define_windows_service, service_dispatcher};
 
+#[cfg(windows)]
 define_windows_service!(ffi_service_main, service_main);
 
 fn main() -> Result<()> {
     match std::env::args().nth(1).as_deref() {
+        #[cfg(windows)]
         Some("install") => install(),
+        #[cfg(windows)]
         Some("uninstall") => uninstall(),
         // Internal helpers the service starts for OpenConnect tunnels.
         Some("oc-auth") => openconnect_auth::run(),
+        #[cfg(windows)]
         Some("oc-stop") => {
             let pid = std::env::args().nth(2).and_then(|p| p.parse().ok()).context("oc-stop needs a pid")?;
             netstats::send_ctrl_c(pid)
@@ -47,11 +82,40 @@ fn main() -> Result<()> {
             runtime()?.block_on(server::run(Arc::new(Notify::new())))
         }
         Some(other) => anyhow::bail!("unknown command `{other}` (expected install, uninstall or run)"),
+        #[cfg(windows)]
         None => {
             init_logging(false);
             service_dispatcher::start(SERVICE_NAME, ffi_service_main).context("starting service dispatcher")
         }
+        #[cfg(target_os = "macos")]
+        None => {
+            init_logging(false);
+            run_daemon()
+        }
     }
+}
+
+/// launchd stops the daemon with SIGTERM (then SIGKILL after `ExitTimeOut`),
+/// so that is the cue to close the tunnels.
+#[cfg(target_os = "macos")]
+fn run_daemon() -> Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let rt = runtime()?;
+    rt.block_on(async {
+        let shutdown = Arc::new(Notify::new());
+        let mut term = signal(SignalKind::terminate())?;
+        let mut int = signal(SignalKind::interrupt())?;
+        let notify = shutdown.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = int.recv() => {}
+            }
+            notify.notify_one();
+        });
+        server::run(shutdown).await
+    })
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
@@ -80,12 +144,14 @@ fn init_logging(console: bool) {
     }
 }
 
+#[cfg(windows)]
 fn service_main(_args: Vec<OsString>) {
     if let Err(e) = run_service() {
         tracing::error!("service failed: {e:#}");
     }
 }
 
+#[cfg(windows)]
 fn service_status(state: ServiceState, accept: ServiceControlAccept, exit_code: ServiceExitCode) -> ServiceStatus {
     ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
@@ -100,6 +166,7 @@ fn service_status(state: ServiceState, accept: ServiceControlAccept, exit_code: 
     }
 }
 
+#[cfg(windows)]
 fn run_service() -> Result<()> {
     static HANDLE: std::sync::OnceLock<service_control_handler::ServiceStatusHandle> = std::sync::OnceLock::new();
     let shutdown = Arc::new(Notify::new());
@@ -128,6 +195,7 @@ fn run_service() -> Result<()> {
     result
 }
 
+#[cfg(windows)]
 fn install() -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)
         .context("opening the service manager (run this from an elevated terminal)")?;
@@ -173,6 +241,7 @@ fn install() -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn uninstall() -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("opening the service manager (run this from an elevated terminal)")?;

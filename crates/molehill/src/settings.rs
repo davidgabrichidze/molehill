@@ -85,6 +85,7 @@ pub fn save(s: &Settings) {
 }
 
 /// Windows' app theme: true when apps should be dark.
+#[cfg(windows)]
 pub fn system_prefers_dark() -> bool {
     use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
     use windows::core::w;
@@ -103,4 +104,14 @@ pub fn system_prefers_dark() -> bool {
     };
     // Missing value: Windows' default is light.
     rc == windows::Win32::Foundation::ERROR_SUCCESS && value == 0
+}
+
+/// macOS appearance: true in Dark Mode. Read from the global defaults
+/// domain, where `AppleInterfaceStyle` is "Dark" only in Dark Mode.
+#[cfg(target_os = "macos")]
+pub fn system_prefers_dark() -> bool {
+    std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output()
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "Dark")
 }

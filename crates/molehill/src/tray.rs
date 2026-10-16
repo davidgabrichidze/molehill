@@ -7,6 +7,7 @@ use std::cell::RefCell;
 
 use anyhow::Result;
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
 
 #[derive(Debug, Clone, Copy)]
@@ -96,7 +97,11 @@ fn mark_pixels(png_bytes: &[u8], size: u32) -> Option<Vec<u8>> {
 fn icon(state: TrayState) -> Option<Icon> {
     // The shell's small-icon size (16 at 100 %, 20 at 125 %, 24 at 150 %),
     // so the icon isn't rescaled again, blurrily, by Windows.
+    #[cfg(windows)]
     let size = (unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16)) as u32;
+    // The menu bar is 22 points tall; tray-icon scales for Retina itself.
+    #[cfg(target_os = "macos")]
+    let size = 36;
     Icon::from_rgba(mark_pixels(state.png(), size)?, size, size).ok()
 }
 

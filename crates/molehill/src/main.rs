@@ -1,11 +1,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client;
+#[cfg(target_os = "macos")]
+#[path = "compat_macos.rs"]
+mod compat;
 mod certs;
+#[cfg(windows)]
+mod gpcallback;
+#[cfg(target_os = "macos")]
+#[path = "gpcallback_macos.rs"]
 mod gpcallback;
 mod localauth;
+#[cfg(windows)]
 mod selfupdate;
+#[cfg(target_os = "macos")]
+#[path = "selfupdate_macos.rs"]
+mod selfupdate;
+// The taskbar badge and window icon use it on Windows; the tray on both.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod logo;
+#[cfg(windows)]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "platform_macos.rs"]
 mod platform;
 mod settings;
 mod tray;
@@ -120,6 +137,7 @@ fn main() -> anyhow::Result<()> {
     }
     selfupdate::set_app_id();
     // COM on the UI thread, for the taskbar badge (ITaskbarList3).
+    #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
     // A crash during a GlobalProtect sign-in leaves the handler registered.
     gpcallback::unregister();
@@ -230,6 +248,7 @@ impl App {
 
     /// From the window procedure after a move or resize; skipped (not
     /// crashed) if the state happens to be busy.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn remember_window(&self, pos: (i32, i32), height: f64) {
         let Ok(mut st) = self.state.try_borrow_mut() else { return };
         st.settings.window_pos = Some(pos);

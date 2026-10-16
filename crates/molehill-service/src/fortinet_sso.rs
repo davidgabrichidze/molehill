@@ -95,16 +95,27 @@ fn answer_browser(stream: TcpStream) -> Option<String> {
 /// Trades the SAML id for the session cookie.
 fn trade(base: &str, pin: &str, id: &str) -> Result<String> {
     let url = format!("{base}/remote/saml/auth_id?id={}", url_encode(id));
-    let headers = pinned_curl(pin, &["-o", "NUL", "-D", "-", &url]).context("Couldn't finish the sign-in")?;
+    let headers = pinned_curl(pin, &["-o", NULL_DEVICE, "-D", "-", &url]).context("Couldn't finish the sign-in")?;
     session_cookie(&headers).ok_or_else(|| anyhow!("The FortiGate didn't hand out a session after the browser sign-in"))
 }
 
+#[cfg(windows)]
+const NULL_DEVICE: &str = "NUL";
+#[cfg(target_os = "macos")]
+const NULL_DEVICE: &str = "/dev/null";
+
 /// Runs Windows' curl.exe pinned to the server certificate `pin`
-/// (`pin-sha256:…`); returns what it printed.
+/// (`pin-sha256:…`); returns what it printed. On macOS, `/usr/bin/curl`.
 pub(crate) fn pinned_curl(pin: &str, args: &[&str]) -> Result<String> {
+    #[cfg(windows)]
     use std::os::windows::process::CommandExt;
+    #[cfg(target_os = "macos")]
+    use crate::compat::CommandExt as _;
     let spki = pin.strip_prefix("pin-sha256:").ok_or_else(|| anyhow!("unexpected certificate pin {pin}"))?;
+    #[cfg(windows)]
     let curl = crate::security::system32("curl.exe");
+    #[cfg(target_os = "macos")]
+    let curl = "/usr/bin/curl";
     // -k: trust comes from the pin, which is stricter than the CA check.
     let out = Command::new(curl)
         .args(["-sS", "-k", "--max-time", "20"])

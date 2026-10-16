@@ -105,12 +105,20 @@ struct Api {
 
 impl Api {
     fn load(dir: &std::path::Path) -> Result<Self> {
+        #[cfg(windows)]
         use libloading::os::windows::{LOAD_WITH_ALTERED_SEARCH_PATH, Library};
+        #[cfg(windows)]
         let path = dir.join("libopenconnect-5.dll");
         // Altered search path: its own DLLs (GnuTLS etc.) load from its folder.
+        #[cfg(windows)]
         let lib: libloading::Library = unsafe { Library::load_with_flags(&path, LOAD_WITH_ALTERED_SEARCH_PATH) }
             .with_context(|| format!("loading {}", path.display()))?
             .into();
+        // The bundled dylibs find each other through @loader_path.
+        #[cfg(target_os = "macos")]
+        let path = dir.join("libopenconnect.5.dylib");
+        #[cfg(target_os = "macos")]
+        let lib = unsafe { libloading::Library::new(&path) }.with_context(|| format!("loading {}", path.display()))?;
         macro_rules! sym {
             ($name:literal) => {
                 *unsafe { lib.get(concat!($name, "\0").as_bytes()) }.with_context(|| format!("libopenconnect has no {}", $name))?

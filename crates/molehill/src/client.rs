@@ -5,6 +5,7 @@ use std::time::Duration;
 use molehill_core::APP_VERSION;
 use molehill_core::ipc::{self, Event, Request};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
 use tokio::sync::mpsc;
 
@@ -34,7 +35,11 @@ pub fn start(on_event: impl Fn(ClientEvent) + Send + 'static) -> Client {
             rt.block_on(async move {
                 let mut online = None;
                 loop {
-                    let pipe = match ClientOptions::new().open(ipc::PIPE_NAME) {
+                    #[cfg(windows)]
+                    let opened = ClientOptions::new().open(ipc::PIPE_NAME);
+                    #[cfg(target_os = "macos")]
+                    let opened = tokio::net::UnixStream::connect(ipc::SOCKET_PATH).await;
+                    let pipe = match opened {
                         Ok(p) => p,
                         Err(_) => {
                             if online != Some(false) {

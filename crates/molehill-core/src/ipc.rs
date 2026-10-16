@@ -6,7 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(windows)]
 pub const PIPE_NAME: &str = r"\\.\pipe\molehill";
+/// Unix socket the macOS daemon listens on (`root:staff`, mode 0660).
+#[cfg(target_os = "macos")]
+pub const SOCKET_PATH: &str = "/var/run/molehill.sock";
 
 /// App → service.
 #[derive(Debug, Clone, Serialize, Deserialize)]

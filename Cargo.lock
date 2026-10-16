@@ -3061,6 +3061,7 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64",
+ "libc",
  "libloading 0.9.0",
  "molehill-core",
  "serde",

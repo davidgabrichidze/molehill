@@ -1,4 +1,5 @@
-//! Named-pipe server and the registry of running tunnels.
+//! IPC server (a named pipe on Windows, a Unix socket on macOS) and the
+//! registry of running tunnels.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -7,7 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use molehill_core::ipc::{self, Answer, ComponentInfo, Event, Prompt, Request, TunnelSpec, TunnelState, TunnelStatus};
 use molehill_core::{APP_VERSION, paths};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::{Notify, broadcast, mpsc};
 use tracing::{info, warn};
@@ -217,6 +219,24 @@ pub async fn run(shutdown: Arc<Notify>) -> Result<()> {
     let (events, _) = broadcast::channel(256);
     let mgr = Arc::new(Manager { events, inner: Mutex::new(Inner::default()) });
 
+    accept(&mgr, &shutdown).await?;
+
+    // Long enough for openconnect's graceful stop (5 s Ctrl+C wait + 10 s
+    // kill timer) to restore routes and DNS.
+    info!("shutting down, closing {} tunnel(s)", mgr.active_tunnels());
+    mgr.disconnect_all();
+    for _ in 0..250 {
+        if mgr.active_tunnels() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Ok(())
+}
+
+/// Serves clients until `shutdown` fires.
+#[cfg(windows)]
+async fn accept(mgr: &Arc<Manager>, shutdown: &Notify) -> Result<()> {
     let mut server = create_pipe(true)?;
     loop {
         tokio::select! {
@@ -237,20 +257,48 @@ pub async fn run(shutdown: Arc<Notify>) -> Result<()> {
             _ = shutdown.notified() => break,
         }
     }
-
-    // Long enough for openconnect's graceful stop (5 s Ctrl+C wait + 10 s
-    // kill timer) to restore routes and DNS.
-    info!("shutting down, closing {} tunnel(s)", mgr.active_tunnels());
-    mgr.disconnect_all();
-    for _ in 0..250 {
-        if mgr.active_tunnels() == 0 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
     Ok(())
 }
 
+/// Serves clients until `shutdown` fires. Any local login user may connect,
+/// as on Windows: the socket is `root:staff`, mode 0660.
+#[cfg(target_os = "macos")]
+async fn accept(mgr: &Arc<Manager>, shutdown: &Notify) -> Result<()> {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let path = std::path::Path::new(ipc::SOCKET_PATH);
+    // A socket left by a crash would make bind fail; anything else at that
+    // path is not ours to delete.
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if !meta.file_type().is_socket() {
+            anyhow::bail!("{} exists and is not a socket", path.display());
+        }
+        std::fs::remove_file(path)?;
+    }
+    let listener = tokio::net::UnixListener::bind(path)?;
+    const STAFF_GID: u32 = 20;
+    std::os::unix::fs::chown(path, Some(0), Some(STAFF_GID))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))?;
+    loop {
+        tokio::select! {
+            res = listener.accept() => match res {
+                Ok((stream, _)) => {
+                    match stream.peer_cred() {
+                        Ok(cred) => info!("client connected (uid {})", cred.uid()),
+                        Err(e) => warn!("client connected, peer credentials unavailable: {e}"),
+                    }
+                    tokio::spawn(handle_client(stream, mgr.clone()));
+                }
+                Err(e) => warn!("socket accept failed: {e}"),
+            },
+            _ = shutdown.notified() => break,
+        }
+    }
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[cfg(windows)]
 fn create_pipe(first: bool) -> Result<NamedPipeServer> {
     let mut sa = security::pipe_attributes()?;
     let pipe = unsafe {
@@ -262,7 +310,10 @@ fn create_pipe(first: bool) -> Result<NamedPipeServer> {
     Ok(pipe)
 }
 
-async fn handle_client(pipe: NamedPipeServer, mgr: Arc<Manager>) {
+async fn handle_client<S>(pipe: S, mgr: Arc<Manager>)
+where
+    S: AsyncRead + AsyncWrite + Send + 'static,
+{
     let (read, mut write) = tokio::io::split(pipe);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Event>();
 

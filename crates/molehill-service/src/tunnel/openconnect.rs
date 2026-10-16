@@ -12,12 +12,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use molehill_core::ipc::{Answer, Event, Prompt, TunnelState};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+#[cfg_attr(not(windows), allow(unused_imports))]
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::time::Instant;
 use tracing::{info, warn};
 
 use crate::components;
+#[cfg(target_os = "macos")]
+use crate::compat::CommandExt as _;
 use crate::netstats;
 use crate::openconnect_auth::{AuthRequest, AuthResult, HelperAnswer, HelperEvent};
 use crate::server::{Manager, TunnelCmd, status};
@@ -244,15 +247,31 @@ impl Session {
     /// Step 2: `openconnect.exe` with the cookie.
     async fn tunnel(&mut self, spec: &Spec, dir: &std::path::Path, auth: AuthResult, cmds: &mut UnboundedReceiver<TunnelCmd>) -> Result<()> {
         self.set(TunnelState::Connecting, "Starting the tunnel");
+        #[cfg(windows)]
         let ifname = format!("Molehill-{}", &self.id[..self.id.len().min(8)]);
         // Just the path: on Windows openconnect runs `cscript.exe /e:JScript "<script>"` itself.
+        #[cfg(windows)]
         let script = dir.join("vpnc-script-win.js").display().to_string();
+        #[cfg(windows)]
         let mut cmd = Command::new(dir.join("openconnect.exe"));
+        #[cfg(windows)]
         cmd.arg(format!("--protocol={}", spec.protocol))
             .arg("--cookie-on-stdin")
             .arg("--non-inter")
             .arg(format!("--interface={ifname}"))
             .arg(format!("--script={script}"));
+        // macOS names the utun device itself, so there is no --interface. The
+        // script path is run through `/bin/sh -c`; the engines directory has
+        // no spaces.
+        #[cfg(target_os = "macos")]
+        let ifname = String::new();
+        #[cfg(target_os = "macos")]
+        let mut cmd = Command::new(dir.join("openconnect"));
+        #[cfg(target_os = "macos")]
+        cmd.arg(format!("--protocol={}", spec.protocol))
+            .arg("--cookie-on-stdin")
+            .arg("--non-inter")
+            .arg(format!("--script={}", dir.join("vpnc-script").display()));
         if let Some(pin) = &auth.pin {
             cmd.arg(format!("--servercert={pin}"));
         }
@@ -356,10 +375,19 @@ async fn send_line(stdin: &mut ChildStdin, line: &str) -> Result<()> {
 
 /// Sends Ctrl+C to openconnect.exe through the `oc-stop` helper (attaching to
 /// another process's console can't be done from the service itself).
+#[cfg(windows)]
 async fn stop_gracefully(pid: u32) {
     let Ok(exe) = std::env::current_exe() else { return };
     let child: std::io::Result<Child> = Command::new(exe).arg("oc-stop").arg(pid.to_string()).creation_flags(CREATE_NO_WINDOW).spawn();
     if let Ok(mut c) = child {
         let _ = tokio::time::timeout(Duration::from_secs(5), c.wait()).await;
+    }
+}
+
+/// SIGINT makes openconnect log out and restore routes and DNS.
+#[cfg(target_os = "macos")]
+async fn stop_gracefully(pid: u32) {
+    if let Ok(pid) = i32::try_from(pid) {
+        unsafe { libc::kill(pid, libc::SIGINT) };
     }
 }

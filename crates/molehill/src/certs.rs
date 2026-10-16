@@ -1,6 +1,7 @@
 //! Client certificates in the user's Windows store, as OpenConnect sees them
 //! (its `list-system-keys.exe`, run as the user), for the editor's choice.
 
+#[cfg_attr(not(windows), allow(unused_imports))]
 use molehill_core::paths;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11,6 +12,7 @@ pub struct Cert {
     pub label: String,
 }
 
+#[cfg(windows)]
 pub fn list() -> Vec<Cert> {
     use std::os::windows::process::CommandExt;
     let Some(dir) = paths::openconnect_dir() else { return Vec::new() };
@@ -20,6 +22,14 @@ pub fn list() -> Vec<Cert> {
     parse(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// The Windows certificate store has no macOS counterpart that OpenConnect
+/// can read; macOS profiles use certificate files instead.
+#[cfg(target_os = "macos")]
+pub fn list() -> Vec<Cert> {
+    Vec::new()
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
 fn parse(text: &str) -> Vec<Cert> {
     let mut certs = Vec::new();
     let mut uri: Option<String> = None;
@@ -37,6 +47,7 @@ fn parse(text: &str) -> Vec<Cert> {
 
 /// The subject's CN, the issuer's CN and the expiry date, from GnuTLS's
 /// one-line description.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn label(info: &str) -> String {
     let quoted = |key: &str| info.split(key).nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
     let cn = |dn: &str| dn.split(',').find_map(|p| p.trim().strip_prefix("CN=")).unwrap_or(dn).to_string();

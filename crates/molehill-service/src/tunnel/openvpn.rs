@@ -25,6 +25,8 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 use crate::components;
+#[cfg(target_os = "macos")]
+use crate::compat::CommandExt as _;
 use crate::server::{Manager, TunnelCmd, status};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -194,8 +196,11 @@ impl Session {
         std::fs::write(&pw_path, &mgmt_password).context("writing management password")?;
         self.files = vec![cfg_path.clone(), pw_path.clone()];
 
+        #[cfg(windows)]
         let busy = self.mgr.active_tunnels();
+        #[cfg(windows)]
         let cfg_for_adapter = config.clone();
+        #[cfg(windows)]
         tokio::task::spawn_blocking(move || ensure_adapter(&cfg_for_adapter, busy)).await.ok();
 
         let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
@@ -549,6 +554,7 @@ impl Session {
 
 /// Makes sure a free network adapter exists for one more tunnel. OpenVPN
 /// needs one adapter per running tunnel and the MSI only creates one.
+#[cfg(windows)]
 fn ensure_adapter(config: &str, active_tunnels: usize) {
     use std::os::windows::process::CommandExt;
     let Some(tapctl) = components::openvpn_bin_dir().map(|d| d.join("tapctl.exe")) else { return };

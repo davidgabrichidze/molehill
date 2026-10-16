@@ -5,6 +5,10 @@ pub mod ocauth;
 pub mod ovpn;
 pub mod paths;
 pub mod profile;
+#[cfg(windows)]
+pub mod secrets;
+#[cfg(target_os = "macos")]
+#[path = "secrets_macos.rs"]
 pub mod secrets;
 pub mod setup;
 pub mod update;
