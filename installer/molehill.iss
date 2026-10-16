@@ -4,10 +4,11 @@
 ; Output: installer\Output\molehill-setup-<version>.exe
 
 #define AppName "Molehill"
-#define AppVersion "0.1.0"
 #define AppExe "molehill.exe"
 #define ServiceExe "molehill-service.exe"
 #define Bin "..\target\release"
+; From the binary's version resource, so it can't drift from Cargo.toml.
+#define AppVersion GetVersionNumbersString(Bin + "\" + AppExe)
 
 [Setup]
 AppId={{6F3C2B1E-8D4A-4E59-9C1B-4D2E7A9F0B3C}
@@ -48,19 +49,47 @@ Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: s
   ValueData: """{app}\{#AppExe}"" --hidden"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\{#ServiceExe}"; Parameters: "install"; Flags: runhidden waituntilterminated; StatusMsg: "Setting up the Molehill service..."
 Filename: "{app}\{#AppExe}"; Description: "Open Molehill"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{app}\{#ServiceExe}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
 
+; Service data (downloads, logs, run files). Profiles and saved passwords
+; are per user and stay: %APPDATA%\Molehill and Credential Manager.
+[UninstallDelete]
+Type: filesandordirs; Name: "{commonappdata}\Molehill"
+
 [Code]
-// Stop the service so its binary can be replaced on upgrade.
+// Stop the service so its binary can be replaced on upgrade, and close the
+// app (it answers WM_ENDSESSION, which the Restart Manager sends).
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code, I: Integer;
+begin
+  // 1060: no such service (fresh install), nothing to wait for.
+  Exec(ExpandConstant('{sys}\sc.exe'), 'query Molehill', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  if Code <> 1060 then
+  begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop Molehill', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    for I := 1 to 60 do
+    begin
+      Exec(ExpandConstant('{cmd}'), '/c sc query Molehill | find "STOPPED" > nul', '', SW_HIDE, ewWaitUntilTerminated, Code);
+      if Code = 0 then Break;
+      Sleep(500);
+    end;
+  end;
+  Result := '';
+end;
+
+// The service must be set up for anything to work; say so if it isn't.
+procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
 begin
-  Exec(ExpandConstant('{sys}\sc.exe'), 'stop Molehill', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  Sleep(1500);
-  Result := '';
+  if CurStep = ssPostInstall then
+  begin
+    if not Exec(ExpandConstant('{app}\{#ServiceExe}'), 'install', '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+      MsgBox('The Molehill service could not be installed (code ' + IntToStr(Code) + '). ' +
+             'Run "molehill-service.exe install" from an elevated terminal, or reinstall.', mbError, MB_OK);
+  end;
 end;

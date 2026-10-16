@@ -77,6 +77,9 @@ const OC_FORM_OPT_TEXT: c_int = 1;
 const OC_FORM_OPT_PASSWORD: c_int = 2;
 const OC_FORM_OPT_SELECT: c_int = 3;
 const OC_FORM_OPT_TOKEN: c_int = 5;
+// SAML forms: libopenconnect expects an embedded browser to fill these.
+const OC_FORM_OPT_SSO_TOKEN: c_int = 6;
+const OC_FORM_OPT_SSO_USER: c_int = 7;
 const OC_FORM_OPT_IGNORE: c_uint = 0x0001;
 const OC_FORM_RESULT_OK: c_int = 0;
 const OC_FORM_RESULT_CANCELLED: c_int = 1;
@@ -218,6 +221,8 @@ struct Ctx {
     /// at the first form.
     probing: bool,
     probed: bool,
+    /// The server sent a SAML form while in password mode.
+    sso_needed: bool,
     last_error: Option<String>,
 }
 
@@ -340,13 +345,12 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     // Pick the saved group first; the server sends a fresh form for it.
     if let Some(group) = ctx.req.group.clone().filter(|_| !form.authgroup_opt.is_null() && !ctx.group_switched) {
         let choices = select_choices(form.authgroup_opt);
-        if let Some(i) = choices.iter().position(|(n, l)| same(n, &group) || same(l, &group)) {
-            if i as c_int != form.authgroup_selection {
+        if let Some(i) = choices.iter().position(|(n, l)| same(n, &group) || same(l, &group))
+            && i as c_int != form.authgroup_selection {
                 ctx.group_switched = true;
                 ctx.set(unsafe { &mut (*form.authgroup_opt).form }, &choices[i].0);
                 return OC_FORM_RESULT_NEWGROUP;
             }
-        }
     }
 
     let auth_id = cstr(form.auth_id).unwrap_or_default();
@@ -369,11 +373,17 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     let mut p = form.opts;
     while !p.is_null() {
         let o = unsafe { &*p };
+        if matches!(o.kind, OC_FORM_OPT_SSO_TOKEN | OC_FORM_OPT_SSO_USER) {
+            ctx.sso_needed = true;
+        }
         all.push(format!("{}:{}{}", cstr(o.name).unwrap_or_default(), o.kind, if o.flags != 0 { format!("/{:#x}", o.flags) } else { String::new() }));
         if o.flags & OC_FORM_OPT_IGNORE == 0 && matches!(o.kind, OC_FORM_OPT_TEXT | OC_FORM_OPT_PASSWORD | OC_FORM_OPT_SELECT | OC_FORM_OPT_TOKEN) {
             opts.push(p);
         }
         p = o.next;
+    }
+    if ctx.sso_needed {
+        return OC_FORM_RESULT_CANCELLED;
     }
     let infos: Vec<FieldInfo> = opts
         .iter()
@@ -481,12 +491,11 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
                 // A different group means a different form: ask the server for it.
                 if group_name.as_deref() == Some(name.as_str()) {
                     let choices = select_choices(form.authgroup_opt);
-                    if let Some(c) = choices.iter().position(|(n, _)| n == value) {
-                        if c as c_int != form.authgroup_selection {
+                    if let Some(c) = choices.iter().position(|(n, _)| n == value)
+                        && c as c_int != form.authgroup_selection {
                             ctx.set(op, value);
                             return OC_FORM_RESULT_NEWGROUP;
                         }
-                    }
                 }
                 ctx.set(op, value);
             }
@@ -670,6 +679,7 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         cancelled: false,
         probing: false,
         probed: false,
+        sso_needed: false,
         last_error: None,
     }));
     // SAFETY: ctx lives until the end of this function; libopenconnect only
@@ -701,6 +711,9 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         let sso = c.req.sso && matches!(c.req.protocol.as_str(), "fortinet" | "gp");
         c.probing = sso;
         let rc = unsafe { (c.api.obtain_cookie)(vpn) };
+        if c.sso_needed {
+            bail!("This server signs in through the browser (SAML). Edit the connection and pick Browser SSO.");
+        }
         if c.cancelled {
             bail!("Cancelled");
         }

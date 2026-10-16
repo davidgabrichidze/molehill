@@ -86,6 +86,18 @@ privileges. Molehill locks it down:
    over HTTPS.
 5. OpenConnect sign-in runs in a separate helper process that loads
    libopenconnect, so a failure there cannot take the service down.
+6. Every engine process is tied to the service with a job object: if the
+   service dies, Windows ends the tunnels with it, so nothing keeps running
+   as SYSTEM unattended.
+7. Connection ids from the app are checked before they name any file, and
+   the service refuses its data folders if a junction or symlink was planted
+   there before it first ran.
+
+Known limits: the service's pipe is open to every interactive user of the
+machine, so on a shared PC one user can see and disconnect another's
+tunnels (Molehill is meant for single-user machines; per-session scoping
+is on the roadmap). The OpenConnect installer has no Authenticode
+signature upstream, so its integrity rests on HTTPS to gitlab.com.
 
 ## Building
 
@@ -94,7 +106,7 @@ Requirements: Rust (stable, 2024 edition) and the Visual Studio Build Tools
 
 ```powershell
 cargo build --release
-# installer (needs Inno Setup 6: winget install JRSoftware.InnoSetup)
+# installer (needs Inno Setup 6.3+: winget install JRSoftware.InnoSetup)
 iscc installer\molehill.iss
 ```
 
@@ -148,7 +160,8 @@ installer/            Inno Setup script
    the default browser like gpauth (`default-browser=2` prelogin, then the
    `globalprotectcallback:` link, handled by Molehill only while it waits).
    Still to do: HIP reports (OpenConnect can't run the HIP script on Windows)
-5. Molehill self-update, signed releases, a winget manifest, light theme, and
+5. Per-user scoping of tunnels on shared machines; HIP reports for GlobalProtect
+6. Molehill self-update, signed releases, a winget manifest, light theme, and
    following the Windows accent color
 
 ## License

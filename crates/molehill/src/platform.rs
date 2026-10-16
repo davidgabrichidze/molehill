@@ -224,7 +224,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let r = unsafe { *(lp.0 as *const RECT) };
             crate::with_app(|app| {
                 let window = slint::ComponentHandle::window(&app.ui);
-                let _ = window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: dpi as f32 / 96.0 });
+                window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: dpi as f32 / 96.0 });
             });
             unsafe {
                 let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);

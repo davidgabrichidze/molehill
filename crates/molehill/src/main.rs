@@ -693,11 +693,10 @@ impl App {
         let user = ui.get_form_username().trim().to_string();
         let mut pass = ui.get_form_password().to_string();
         let mut st = self.state.borrow_mut();
-        if pass.is_empty() {
-            if let Some(id) = &st.editing {
+        if pass.is_empty()
+            && let Some(id) = &st.editing {
                 pass = secrets::load_password(id).unwrap_or_default();
             }
-        }
         if address.is_empty() {
             ui.set_form_error("Enter the server address.".into());
             return;
@@ -863,11 +862,10 @@ impl App {
 
         if !remember {
             let _ = secrets::delete_password(&id);
-        } else if !password.is_empty() {
-            if let Err(e) = secrets::save_password(&id, &username, &password) {
+        } else if !password.is_empty()
+            && let Err(e) = secrets::save_password(&id, &username, &password) {
                 return fail(format!("{e:#}"));
             }
-        }
         let server_cert_pin = existing.as_ref().filter(|p| p.gateway.as_deref() == Some(gateway.as_str())).and_then(|p| p.server_cert_pin.clone());
         st.store.upsert(Profile {
             id,

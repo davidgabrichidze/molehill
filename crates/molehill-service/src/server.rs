@@ -340,17 +340,6 @@ fn valid_id(id: &str) -> bool {
     (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn ids_cannot_carry_paths() {
-        assert!(super::valid_id(&molehill_core::profile::new_id()));
-        for bad in ["", r"..x", r"C:Windowsx", "a/b", "a b", "ß", &"a".repeat(65)] {
-            assert!(!super::valid_id(bad), "{bad}");
-        }
-    }
-}
-
 /// Removes the tunnel from the registry when its task ends, however it ends.
 struct Finished {
     mgr: Arc<Manager>,
@@ -365,5 +354,16 @@ impl Drop for Finished {
             self.mgr.set_status(status(&self.id, &self.name, TunnelState::Failed, "The tunnel stopped unexpectedly (see service.log)"));
         }
         self.mgr.tunnel_finished(&self.id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ids_cannot_carry_paths() {
+        assert!(super::valid_id(&molehill_core::profile::new_id()));
+        for bad in ["", r"..x", r"C:Windowsx", "a/b", "a b", "ß", &"a".repeat(65)] {
+            assert!(!super::valid_id(bad), "{bad}");
+        }
     }
 }

@@ -133,7 +133,7 @@ fn session_cookie(headers: &str) -> Option<String> {
             let value = value.split(';').next().unwrap_or("").trim();
             (!value.is_empty()).then(|| value.to_string())
         })
-        .last()
+        .next_back()
 }
 
 fn query_param(target: &str, key: &str) -> Option<String> {
