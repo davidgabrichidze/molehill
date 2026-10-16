@@ -1,11 +1,12 @@
 //! Win32 touches: dark title bar in the theme colors, DPI-change handling,
 //! the tray popup's placement and focus, single instance.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
-use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL, DwmSetWindowAttribute,
@@ -19,7 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDPISCALEDSIZE, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
     GetWindowTextW, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
     SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_DPICHANGED, WM_GETMINMAXINFO, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    MINMAXINFO, PostMessageW, RegisterWindowMessageW, SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_DPICHANGED, WM_ENDSESSION,
+    WM_GETMINMAXINFO, WM_QUERYENDSESSION, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -159,10 +161,10 @@ pub fn claim_single_instance() -> bool {
             std::mem::forget(mutex);
             return true;
         }
+        // Showing the window from outside would leave Slint thinking it's
+        // still hidden (nothing gets painted); ask the first instance instead.
         if let Ok(hwnd) = FindWindowW(w!("Window Class"), w!("Molehill")) {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-            let _ = SetForegroundWindow(hwnd);
+            let _ = PostMessageW(Some(hwnd), show_message(), WPARAM(0), LPARAM(0));
         }
         false
     }
@@ -171,8 +173,10 @@ pub fn claim_single_instance() -> bool {
 /// The main window's fixed client size in logical pixels (see ui/app.slint).
 const LOGICAL_SIZE: (f64, f64) = (440.0, 660.0);
 
-thread_local! {
-    static APPLYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// Sent to the main window by a second Molehill instance: show yourself.
+fn show_message() -> u32 {
+    static MSG: OnceLock<u32> = OnceLock::new();
+    *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(w!("MolehillShow")) })
 }
 
 /// Outer window size for the fixed logical client size at `dpi`.
@@ -204,9 +208,17 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 return LRESULT(1);
             }
         }
-        // winit still holds min/max limits in pixels for the old scale until
-        // Slint's next frame; don't let them clamp the new size.
-        WM_GETMINMAXINFO if APPLYING.get() => return LRESULT(0),
+        // winit keeps min/max limits in pixels of the scale it last saw, and
+        // it never sees the scale change below; answer with the fixed size at
+        // the window's current scale instead, always.
+        WM_GETMINMAXINFO => {
+            if let Some((w, h)) = outer_size(hwnd, unsafe { GetDpiForWindow(hwnd) }) {
+                let info = unsafe { &mut *(lp.0 as *mut MINMAXINFO) };
+                info.ptMinTrackSize = POINT { x: w, y: h };
+                info.ptMaxTrackSize = POINT { x: w, y: h };
+                return LRESULT(0);
+            }
+        }
         WM_DPICHANGED => {
             let dpi = (wp.0 & 0xffff) as u32;
             let r = unsafe { *(lp.0 as *const RECT) };
@@ -214,11 +226,20 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let window = slint::ComponentHandle::window(&app.ui);
                 let _ = window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: dpi as f32 / 96.0 });
             });
-            APPLYING.set(true);
             unsafe {
                 let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
             }
-            APPLYING.set(false);
+            return LRESULT(0);
+        }
+        // Windows (or the installer, through the Restart Manager) wants us
+        // gone; closing the window alone only hides it to the tray.
+        WM_QUERYENDSESSION => return LRESULT(1),
+        WM_ENDSESSION if wp.0 != 0 => {
+            let _ = slint::quit_event_loop();
+            return LRESULT(0);
+        }
+        m if m == show_message() => {
+            crate::with_app(|app| app.show());
             return LRESULT(0);
         }
         _ => {}

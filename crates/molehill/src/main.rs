@@ -15,6 +15,7 @@ use client::{Client, ClientEvent};
 use molehill_core::ipc::{
     Answer, ComponentInfo, Event, FieldKind, FormField, Prompt, Request, TunnelSpec, TunnelState, TunnelStatus,
 };
+use molehill_core::APP_VERSION;
 use molehill_core::profile::{self, Profile, ProfileStore, Protocol};
 use molehill_core::setup::{self, ManualOvpn, TlsKeyMode};
 use molehill_core::{ovpn, paths, secrets};
@@ -110,7 +111,13 @@ fn main() -> anyhow::Result<()> {
     let mut state = State::default();
     match ProfileStore::load() {
         Ok(store) => state.store = store,
-        Err(e) => state.error = Some(format!("Could not read your profiles: {e:#}")),
+        Err(e) => {
+            // Don't let the next save overwrite a file that may be repairable.
+            let path = paths::profiles_file();
+            let backup = path.with_extension("toml.bad");
+            let _ = std::fs::rename(&path, &backup);
+            state.error = Some(format!("Could not read your profiles ({e:#}). The file was moved to {}.", backup.display()));
+        }
     }
 
     let app = Rc::new(App {
@@ -272,6 +279,8 @@ impl App {
         });
         let a = app.clone();
         ui.on_delete_profile(move || a().map(|s| s.delete_profile()).unwrap_or_default());
+        let a = app.clone();
+        ui.on_cancel_editor(move || a().map(|s| s.cancel_editor()).unwrap_or_default());
 
         // Tray menu: every action closes it first.
         let menu = &self.menu;
@@ -329,7 +338,10 @@ impl App {
 
     fn on_event(&self, st: &mut State, ev: Event) {
         match ev {
-            Event::Welcome { tunnels, .. } => {
+            Event::Welcome { version, tunnels } => {
+                if version != APP_VERSION {
+                    st.error = Some(format!("The Molehill service is version {version}, the app is {APP_VERSION}. Restart the service or reinstall."));
+                }
                 for t in st.tunnels.values_mut() {
                     t.status = None;
                     t.prompt = None;
@@ -554,7 +566,7 @@ impl App {
             let mut st = self.state.borrow_mut();
             if let Some(p) = st.store.profiles.iter_mut().find(|p| p.id == id) {
                 p.username = (!user.trim().is_empty()).then(|| user.trim().to_string());
-                if remember {
+                if remember && !pass.is_empty() {
                     match secrets::save_password(id, user, pass) {
                         Ok(()) => p.remember_password = true,
                         Err(e) => st.error = Some(format!("{e:#}")),
@@ -707,10 +719,22 @@ impl App {
         });
     }
 
+    /// Back or Cancel in the editor: a fetch still running must not save.
+    fn cancel_editor(&self) {
+        let mut st = self.state.borrow_mut();
+        st.fetch_seq += 1;
+        st.save_after_fetch = false;
+        st.form_import = None;
+        st.editing = None;
+        drop(st);
+        self.ui.set_form_fetch_busy(false);
+        self.ui.set_page(Page::List);
+    }
+
     fn on_fetched(&self, seq: u64, result: Result<String, String>) {
         let ui = &self.ui;
         let mut st = self.state.borrow_mut();
-        if seq != st.fetch_seq {
+        if seq != st.fetch_seq || ui.get_page() != Page::Editor {
             return;
         }
         ui.set_form_fetch_busy(false);
@@ -748,9 +772,6 @@ impl App {
             return fail("Give the connection a name.".into());
         }
         let protocol = Protocol::ALL[ui.get_form_protocol().clamp(0, 3) as usize];
-        if !protocol.supported() {
-            return fail(format!("{} support is coming soon.", protocol.label()));
-        }
         // -1: not an OpenVPN profile, so no config file at all.
         let source = if protocol == Protocol::OpenVpn { ui.get_form_source() } else { -1 };
         let gateway = ui.get_form_gateway().trim().to_string();
@@ -874,7 +895,19 @@ impl App {
     }
 
     fn delete_profile(&self) {
+        let name = self.ui.get_form_name().to_string();
+        let confirmed = rfd::MessageDialog::new()
+            .set_title("Delete connection")
+            .set_description(format!("Delete “{name}” and its saved password? This can't be undone."))
+            .set_level(rfd::MessageLevel::Warning)
+            .set_buttons(rfd::MessageButtons::OkCancelCustom("Delete".into(), "Keep".into()))
+            .show();
+        if confirmed != rfd::MessageDialogResult::Custom("Delete".into()) {
+            return;
+        }
         let mut st = self.state.borrow_mut();
+        st.fetch_seq += 1;
+        st.save_after_fetch = false;
         let Some(id) = st.editing.take() else { return };
         self.client.send(Request::Disconnect { id: id.clone() });
         if let Some(p) = st.store.remove(&id) {
@@ -896,7 +929,7 @@ impl App {
         let text = st.tunnels.get(id).map(|t| join_log(&t.log)).unwrap_or_default();
         st.log_for = Some(id.to_string());
         self.ui.set_log_title(format!("log · {name}").into());
-        self.ui.set_log_text(if text.is_empty() { "Nothing yet. Connect to see OpenVPN's output here.".into() } else { text.into() });
+        self.ui.set_log_text(if text.is_empty() { "Nothing yet. Connect to see the VPN engine's output here.".into() } else { text.into() });
         self.ui.set_page(Page::Log);
     }
 
@@ -1115,9 +1148,6 @@ fn source_of(p: &Profile) -> i32 {
 fn prepare(p: &Profile, online: bool) -> Result<TunnelSpec, String> {
     if !online {
         return Err("The Molehill service isn't running.".into());
-    }
-    if !p.protocol.supported() {
-        return Err(format!("{} support is coming soon.", p.protocol.label()));
     }
     let password = if p.remember_password { secrets::load_password(&p.id) } else { None };
     if let Some(protocol) = p.protocol.openconnect_name() {

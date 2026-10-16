@@ -134,7 +134,7 @@ fn install() -> Result<()> {
         }
         Err(_) => manager.create_service(&info, access)?,
     };
-    service.set_description("Runs Molehill VPN tunnels (OpenVPN, and soon OpenConnect) for the Molehill app.")?;
+    service.set_description("Runs Molehill VPN tunnels (OpenVPN and OpenConnect) for the Molehill app.")?;
     if service.query_status()?.current_state == ServiceState::Stopped {
         service.start::<&str>(&[])?;
     }

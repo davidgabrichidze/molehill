@@ -114,6 +114,7 @@ export component AppWindow inherits Window {
     callback browse-tls-key();
     callback save-profile();
     callback delete-profile();
+    callback cancel-editor();
 
     // ── components ──────────────────────────────────────────────────
     in property <[ComponentItem]> components;
@@ -274,7 +275,7 @@ export component AppWindow inherits Window {
             spacing: 12px;
             Header {
                 title: root.form-is-new ? "new connection" : "edit connection";
-                back => { root.page = Page.list; }
+                back => { root.cancel-editor(); }
             }
 
             ScrollView {
@@ -521,7 +522,7 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 if !root.form-is-new: Btn { text: "Delete"; kind: "danger"; clicked => { root.delete-profile(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Btn { text: "Cancel"; clicked => { root.page = Page.list; } }
+                Btn { text: "Cancel"; clicked => { root.cancel-editor(); } }
                 Btn {
                     text: root.form-fetch-busy ? "Fetching…" : "Save";
                     kind: "primary";
@@ -596,7 +597,7 @@ export component AppWindow inherits Window {
             spacing: 12px;
             Header {
                 title: root.log-title;
-                subtitle: "OpenVPN output from this session";
+                subtitle: "VPN engine output from this session";
                 back => { root.page = Page.list; }
             }
             TextEdit {

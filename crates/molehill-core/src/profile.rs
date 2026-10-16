@@ -38,10 +38,6 @@ impl Protocol {
         }
     }
 
-    pub fn supported(self) -> bool {
-        true
-    }
-
     /// The `--protocol` name OpenConnect uses, for the protocols it drives.
     pub fn openconnect_name(self) -> Option<&'static str> {
         match self {

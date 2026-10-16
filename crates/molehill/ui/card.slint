@@ -53,6 +53,17 @@ export component ConnectionCard inherits Rectangle {
     property <string> user: root.item.prompt-username;
     property <string> secret;
     property <bool> remember: root.item.remember;
+    // Typing breaks the bindings above, so a new prompt (a retry after a
+    // wrong password, say) refreshes them by hand.
+    property <int> seen-prompt;
+    changed item => {
+        if root.item.prompt-id != root.seen-prompt {
+            root.seen-prompt = root.item.prompt-id;
+            root.user = root.item.prompt-username;
+            root.secret = "";
+            root.remember = root.item.remember;
+        }
+    }
     property <color> state-color: root.item.state == "on" ? Theme.green
         : root.item.state == "busy" ? Theme.yellow
         : root.item.state == "error" ? Theme.red : Theme.muted;
