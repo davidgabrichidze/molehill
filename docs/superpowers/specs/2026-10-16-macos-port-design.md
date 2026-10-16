@@ -1,6 +1,6 @@
 # Molehill on macOS — design
 
-Status: draft for approval, rev 2 (after builder review) · 2026-10-16 · author: David Gabrichidze (with Claude Code)
+Status: **approved**, rev 3 · 2026-10-16 · author: David Gabrichidze (with Claude Code)
 
 ## 1. Goal
 
@@ -80,7 +80,7 @@ gating anywhere.
    | `openconnect_auth.rs` `Api::load` | library path and loader per platform | same DLL and flags |
    | `openconnect_auth.rs` `on_form` | new branch for `auth_id == "openconnect_pkcs12"` ahead of `plan_form` (§8) | GnuTLS on Windows asks the same way when a store key needs a PIN. The branch only prompts and never uses the login password, which is safer. |
    | `ocauth.rs` `AuthRequest` | `#[serde(default)] cert_password: Option<String>` | absent, so `None` |
-   | `ovpn.rs` | blocklist gains `dns-updown` and `client-crresponse` on **all** platforms | stricter; both are script hooks, so blocking them matches the stated intent |
+   | `ovpn.rs` | a second list, `BLOCKED_MACOS = ["dns-updown", "client-crresponse"]`, checked only under `cfg(target_os = "macos")` | none. Extending the list to Windows is proposed in a **separate upstream issue** (`docs/superpowers/issues/ovpn-blocklist-dns-updown.md`), not in this PR. If upstream accepts it first, the macOS-only list is folded into `BLOCKED`. |
 
 5. **Rule for reviewers:** a Windows code path changes only by a `cfg`
    attribute, a `#[path]` move, or an edit listed in the table.
@@ -154,9 +154,10 @@ check on Windows.
     running again on a reconnect and leave stale DNS behind.
 - **DNS:** OpenVPN on macOS applies routes but not DNS. The security rule still
   holds: **no profile ever supplies or influences a script.**
-  - **Blocklist:** `ovpn.rs` also blocks `dns-updown` (OpenVPN 2.7) and
-    `client-crresponse`, on every platform. The service passes
-    `--dns-updown disable` when the bundled version understands it.
+  - **Blocklist:** on macOS, `ovpn.rs` also refuses `dns-updown` (OpenVPN 2.7)
+    and `client-crresponse` (§3; Windows is the subject of a separate issue).
+    The service passes `--dns-updown disable` when the bundled version
+    understands it.
   - **The hook is Molehill's own binary, not a shell script.** The arguments
     are
     `--script-security 2 --up "'/opt/molehill/bin/molehill-service' dns-up <id>" --down "… dns-down <id>" --up-restart`.
@@ -365,8 +366,8 @@ for permanent links.
     lists)
   - quoting of arguments for paths with spaces
   - `dev tap` rejection and `persist-tun` stripping
+  - the `ovpn.rs` macOS blocklist additions
 - New tests on every platform:
-  - the `ovpn.rs` blocklist additions
   - the `openconnect_pkcs12` form branch
   - `AuthRequest` deserializing without `cert_password`
 
@@ -419,14 +420,15 @@ PR. `docs/` is the project site, so the doc is dropped from the PR branch.
 - **Clean machine:** install on a Mac **without Homebrew** (a colleague's Mac,
   or a macOS VM such as UTM on the author's Mac). This catches leaked Homebrew
   paths, CA trust, and the first-launch Gatekeeper steps.
-- **Intel:** needs an Intel Mac, or at least the x86_64 `.pkg` installing and
-  connecting on one. Without one, the PR says Intel "builds in CI, untested".
+- **Intel:** an Intel Mac is available. The x86_64 `.pkg` gets the install →
+  connect (at least one OpenConnect protocol and OpenVPN) → update → uninstall
+  pass on it.
 
 ## 15. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Profile sanitiser gaps become root code execution under `script-security 2` | Blocklist additions, pinned OpenVPN version with a per-version review, `--dns-updown disable`, the hook is our own binary that trusts no environment, and a version check at start. |
+| Profile sanitiser gaps become root code execution under `script-security 2` | macOS blocklist additions, pinned OpenVPN version with a per-version review, `--dns-updown disable`, the hook is our own binary that trusts no environment, and a version check at start. |
 | Notification authorization refused for an ad-hoc bundle | `osascript` fallback; only one notification exists. |
 | Keychain re-prompt after each update | Documented. |
 | Homebrew drops Intel bottles, or `macos-15-intel` is retired | Engine bundles are built once per version and stored as release assets (§5). |
