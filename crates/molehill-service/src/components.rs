@@ -261,7 +261,7 @@ fn verify_signature(file: &PathBuf) -> Result<()> {
 const OPENCONNECT_PROJECT: &str = "https://gitlab.com/api/v4/projects/openconnect%2Fopenconnect";
 
 pub fn openconnect_dir() -> Option<PathBuf> {
-    [r"C:\Program Files\OpenConnect"].iter().map(PathBuf::from).find(|d| d.join("openconnect.exe").is_file())
+    paths::openconnect_dir()
 }
 
 fn openconnect_version() -> Option<String> {

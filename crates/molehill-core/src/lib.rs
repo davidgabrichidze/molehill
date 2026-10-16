@@ -1,6 +1,7 @@
 //! Shared building blocks for the Molehill app and its service.
 
 pub mod ipc;
+pub mod ocauth;
 pub mod ovpn;
 pub mod paths;
 pub mod profile;

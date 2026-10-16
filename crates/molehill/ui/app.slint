@@ -113,6 +113,9 @@ export component AppWindow inherits Window {
     in-out property <bool> form-remember;
     // Fortinet / GlobalProtect: browser SSO instead of username / password.
     in-out property <bool> form-sso;
+    // "None" first, then the certificates in the user's Windows store.
+    in property <[string]> form-cert-options: ["None"];
+    in-out property <int> form-cert-index;
     in-out property <string> form-error;
     // 0 = .ovpn file, 1 = Access Server, 2 = manual
     in-out property <int> form-source;
@@ -526,6 +529,16 @@ export component AppWindow inherits Window {
                             placeholder: root.form-protocol == 2 ? "Only if your IT gave you one" : "Asked at sign-in, then remembered";
                             text <=> root.form-group;
                         }
+                    }
+
+                    // Some servers want a certificate from Windows' store too.
+                    if root.form-protocol != 0 && !(root.form-protocol >= 2 && root.form-sso): Field {
+                        label: "Client certificate";
+                        Select {
+                            model: root.form-cert-options;
+                            current-index <=> root.form-cert-index;
+                        }
+                        Hint { text: "Only if the server asks for one, along with your password."; }
                     }
 
                     if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {

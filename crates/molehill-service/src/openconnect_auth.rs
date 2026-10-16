@@ -8,67 +8,17 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use molehill_core::ipc::{FieldKind, FormField};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthRequest {
-    /// OpenConnect's install directory (holds libopenconnect-5.dll).
-    pub dir: PathBuf,
-    pub protocol: String,
-    pub server: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub group: Option<String>,
-    pub pin: Option<String>,
-    /// Fortinet / GlobalProtect: browser SSO (SAML) instead of the login form.
-    #[serde(default)]
-    pub sso: bool,
-    /// The password is a GlobalProtect SAML cookie, not the user's password.
-    #[serde(default)]
-    pub saml_login: bool,
-}
+pub use molehill_core::ocauth::{AuthRequest, AuthResult, HelperAnswer, HelperEvent};
 
 /// What `authenticate` came to.
 enum Next {
     Done(AuthResult),
     /// Sign in again with this request (GlobalProtect, after the browser).
     Again(AuthRequest),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AuthResult {
-    pub cookie: String,
-    pub connect_url: String,
-    /// `--resolve host:ip` so the tunnel doesn't look the name up again.
-    pub resolve: Option<String>,
-    pub pin: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HelperEvent {
-    Log { line: String },
-    Form { banner: Option<String>, error: Option<String>, fields: Vec<FormField> },
-    TrustCert { pin: String, reason: String },
-    OpenUrl { url: String },
-    /// The saved password was filled in and the server rejected it.
-    PasswordRejected,
-    Done(AuthResult),
-    Failed { message: String },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HelperAnswer {
-    Form { values: Vec<(String, String)> },
-    Trust { accept: bool },
-    /// GlobalProtect SSO: the `globalprotectcallback:` URL the browser opened.
-    Callback { url: String },
-    Cancel,
 }
 
 // ── libopenconnect ABI (openconnect.h, API 5.x) ──────────────────────────
@@ -148,6 +98,7 @@ struct Api {
     get_connect_url: unsafe extern "C" fn(Vpn) -> *const c_char,
     get_peer_cert_hash: unsafe extern "C" fn(Vpn) -> *const c_char,
     get_port: unsafe extern "C" fn(Vpn) -> c_int,
+    set_client_cert: unsafe extern "C" fn(Vpn, *const c_char, *const c_char) -> c_int,
     set_option_value: unsafe extern "C" fn(*mut OcFormOpt, *const c_char) -> c_int,
     set_external_browser_callback: Option<unsafe extern "C" fn(Vpn, Option<BrowserCb>) -> c_int>,
 }
@@ -178,6 +129,7 @@ impl Api {
             get_connect_url: sym!("openconnect_get_connect_url"),
             get_peer_cert_hash: sym!("openconnect_get_peer_cert_hash"),
             get_port: sym!("openconnect_get_port"),
+            set_client_cert: sym!("openconnect_set_client_cert"),
             set_option_value: sym!("openconnect_set_option_value"),
             set_external_browser_callback: unsafe { lib.get(b"openconnect_set_external_browser_callback\0") }.ok().map(|s| *s),
             _lib: lib,
@@ -771,6 +723,15 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         }
         if unsafe { (c.api.parse_url)(vpn, server.as_ptr()) } != 0 {
             bail!("“{}” isn't a valid server address", c.req.server);
+        }
+        // A client certificate from the Windows store, for servers that ask
+        // for one along with the password.
+        if let Some(cert) = c.req.cert.as_deref() {
+            let key = c.req.key.clone().unwrap_or_else(|| molehill_core::ocauth::key_for_cert(cert));
+            let (cert_c, key_c) = (cstring(cert), cstring(&key));
+            if unsafe { (c.api.set_client_cert)(vpn, cert_c.as_ptr(), key_c.as_ptr()) } != 0 {
+                bail!("The client certificate couldn't be loaded");
+            }
         }
         if let Some(set_browser) = c.api.set_external_browser_callback {
             unsafe { set_browser(vpn, Some(on_browser)) };

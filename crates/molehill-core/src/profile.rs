@@ -81,6 +81,10 @@ pub struct Profile {
     /// Fortinet / GlobalProtect: sign in with browser SSO (SAML) instead of a password.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sso: bool,
+    /// OpenConnect protocols: a client certificate from the user's Windows
+    /// store (`system:win:id=…;type=cert`), for servers that want one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_cert: Option<String>,
 }
 
 impl Profile {

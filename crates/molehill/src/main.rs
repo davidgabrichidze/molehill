@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client;
+mod certs;
 mod gpcallback;
+mod localauth;
 mod selfupdate;
 mod logo;
 mod platform;
@@ -69,6 +71,12 @@ struct State {
     settings: settings::Settings,
     /// A prompt arrived: bring the list up once the event is handled.
     show_list: bool,
+    /// Sign-ins running here, as the user (client certificates), by profile id.
+    local_auth: HashMap<String, localauth::LocalAuth>,
+    /// What to hand the service once such a sign-in is done.
+    pending_specs: HashMap<String, TunnelSpec>,
+    /// The editor's certificate choices (after "None"), as cert URIs.
+    cert_choices: Vec<String>,
 }
 
 struct App {
@@ -444,7 +452,7 @@ impl App {
         menu.on_disconnect_all(move || {
             if let Some(s) = a() {
                 s.hide_menu();
-                s.client.send(Request::DisconnectAll);
+                s.disconnect_all();
             }
         });
         let a = app.clone();
@@ -573,6 +581,9 @@ impl App {
     fn toggle(&self, id: &str) {
         let active = self.state.borrow().tunnels.get(id).and_then(|t| t.status.as_ref()).is_some_and(|s| s.state.is_active());
         if active {
+            if self.cancel_local_auth(id) {
+                return;
+            }
             self.client.send(Request::Disconnect { id: id.to_string() });
         } else {
             self.connect(id);
@@ -592,7 +603,7 @@ impl App {
             (any, target)
         };
         if any_active {
-            self.client.send(Request::DisconnectAll);
+            self.disconnect_all();
         } else if let Some(id) = target {
             self.connect(&id);
         }
@@ -626,14 +637,177 @@ impl App {
                 since_unix: None,
             };
             t.status = Some(optimistic);
-            self.client.send(Request::Connect { id: p.id.clone(), name: p.name.clone(), spec });
+            // A client certificate: sign in here, as the user (see localauth).
+            if let (Some(cert), TunnelSpec::OpenConnect { protocol, server, username, password, group, server_cert_pin, .. }) =
+                (p.client_cert.clone().filter(|_| !p.sso), &spec)
+            {
+                let Some(dir) = paths::openconnect_dir() else {
+                    t.status = None;
+                    t.local_error = Some("OpenConnect is not installed. Install it from Components.".into());
+                    drop(st);
+                    self.refresh();
+                    return;
+                };
+                let req = molehill_core::ocauth::AuthRequest {
+                    dir,
+                    protocol: protocol.clone(),
+                    server: server.clone(),
+                    username: username.clone(),
+                    password: password.clone(),
+                    group: group.clone(),
+                    pin: server_cert_pin.clone(),
+                    sso: false,
+                    saml_login: false,
+                    key: Some(molehill_core::ocauth::key_for_cert(&cert)),
+                    cert: Some(cert),
+                };
+                let id = p.id.clone();
+                match localauth::LocalAuth::start(&req, move |m| {
+                    let id = id.clone();
+                    on_ui(move |app| app.on_local_auth(&id, m));
+                }) {
+                    Ok(la) => {
+                        st.local_auth.insert(p.id.clone(), la);
+                        st.pending_specs.insert(p.id.clone(), spec);
+                    }
+                    Err(e) => {
+                        t.status = None;
+                        t.local_error = Some(e);
+                    }
+                }
+            } else {
+                self.client.send(Request::Connect { id: p.id.clone(), name: p.name.clone(), spec });
+            }
             st.store.last_used = Some(p.id);
             let _ = st.store.save();
         }
         self.refresh();
     }
 
+    /// A message from a sign-in running here (client certificate), fed in
+    /// as the service's own events would be.
+    fn on_local_auth(&self, id: &str, m: localauth::Message) {
+        use molehill_core::ocauth::HelperEvent;
+        let status = |state: TunnelState, detail: &str| {
+            let name = self.state.borrow().store.get(id).map(|p| p.name.clone()).unwrap_or_default();
+            Event::Status(TunnelStatus { id: id.into(), name, state, detail: detail.into(), local_ip: None, since_unix: None })
+        };
+        let prompt = |prompt: Prompt| {
+            let mut st = self.state.borrow_mut();
+            let la = st.local_auth.get_mut(id)?;
+            la.prompt_seq += 1;
+            Some(Event::Prompt { id: id.into(), prompt_id: la.prompt_seq, prompt })
+        };
+        let events: Vec<Event> = match m {
+            localauth::Message::Event(HelperEvent::Log { line }) => vec![Event::Log { id: id.into(), line }],
+            localauth::Message::Event(HelperEvent::Form { banner, error, fields }) => {
+                prompt(Prompt::Form { banner, error, fields }).into_iter().chain([status(TunnelState::Authenticating, "Waiting for you")]).collect()
+            }
+            localauth::Message::Event(HelperEvent::TrustCert { pin, reason }) => {
+                let host = self.state.borrow().local_auth.get(id).map(|l| l.server.clone()).unwrap_or_default();
+                prompt(Prompt::TrustCert { host, pin, reason }).into_iter().chain([status(TunnelState::Authenticating, "Waiting for you")]).collect()
+            }
+            localauth::Message::Event(HelperEvent::OpenUrl { url }) => {
+                prompt(Prompt::OpenUrl { url }).into_iter().chain([status(TunnelState::Authenticating, "Finish signing in in your browser")]).collect()
+            }
+            localauth::Message::Event(HelperEvent::PasswordRejected) => vec![Event::AuthFailed { id: id.into() }],
+            localauth::Message::Event(HelperEvent::Done(result)) => {
+                let mut st = self.state.borrow_mut();
+                st.local_auth.remove(id);
+                let spec = st.pending_specs.remove(id);
+                let name = st.store.get(id).map(|p| p.name.clone()).unwrap_or_default();
+                drop(st);
+                if let Some(TunnelSpec::OpenConnect { protocol, server, username, password, group, server_cert_pin, sso, .. }) = spec {
+                    let spec = TunnelSpec::OpenConnect { protocol, server, username, password, group, server_cert_pin, sso, auth: Some(Box::new(result)) };
+                    self.client.send(Request::Connect { id: id.into(), name, spec });
+                }
+                vec![status(TunnelState::Connecting, "Starting the tunnel")]
+            }
+            localauth::Message::Event(HelperEvent::Failed { message }) => {
+                let mut st = self.state.borrow_mut();
+                st.local_auth.remove(id);
+                st.pending_specs.remove(id);
+                drop(st);
+                if message == "Cancelled" {
+                    vec![status(TunnelState::Disconnected, "")]
+                } else {
+                    vec![status(TunnelState::Failed, &message)]
+                }
+            }
+            // Ended without a verdict: it crashed or was killed.
+            localauth::Message::Ended => {
+                let mut st = self.state.borrow_mut();
+                let was_running = st.local_auth.remove(id).is_some();
+                st.pending_specs.remove(id);
+                drop(st);
+                if was_running { vec![status(TunnelState::Failed, "The sign-in helper stopped unexpectedly")] } else { vec![] }
+            }
+        };
+        for ev in events {
+            self.on_client_event(ClientEvent::Event(ev));
+        }
+    }
+
+    /// Every tunnel, including sign-ins running here.
+    fn disconnect_all(&self) {
+        let ids: Vec<String> = self.state.borrow().local_auth.keys().cloned().collect();
+        for id in ids {
+            self.cancel_local_auth(&id);
+        }
+        self.client.send(Request::DisconnectAll);
+    }
+
+    /// Stops a sign-in running here; true if there was one.
+    fn cancel_local_auth(&self, id: &str) -> bool {
+        let mut st = self.state.borrow_mut();
+        let Some(la) = st.local_auth.remove(id) else { return false };
+        st.pending_specs.remove(id);
+        drop(st);
+        la.cancel();
+        let name = self.state.borrow().store.get(id).map(|p| p.name.clone()).unwrap_or_default();
+        let ev = Event::Status(TunnelStatus { id: id.into(), name, state: TunnelState::Disconnected, detail: String::new(), local_ip: None, since_unix: None });
+        self.on_client_event(ClientEvent::Event(ev));
+        true
+    }
+
     fn answer(&self, id: &str, prompt_id: i32, answer: Answer) {
+        // A sign-in running here takes the answer itself.
+        let local = {
+            let mut st = self.state.borrow_mut();
+            match st.local_auth.get_mut(id) {
+                Some(la) => {
+                    use molehill_core::ocauth::HelperAnswer;
+                    let reply = match answer.clone() {
+                        Answer::Form { values } => Some(HelperAnswer::Form { values }),
+                        Answer::Text { value } => Some(HelperAnswer::Trust { accept: value == "trust" }),
+                        Answer::Cancel => None,
+                        Answer::Credentials { .. } => Some(HelperAnswer::Cancel),
+                    };
+                    if let Some(r) = &reply {
+                        la.answer(r);
+                    }
+                    Some(reply.is_some())
+                }
+                None => None,
+            }
+        };
+        match local {
+            Some(false) => {
+                self.cancel_local_auth(id);
+                return;
+            }
+            Some(true) => {
+                if let Some(t) = self.state.borrow_mut().tunnels.get_mut(id) {
+                    t.prompt = None;
+                    if let Some(s) = t.status.as_mut() {
+                        s.detail = "Signing in".into();
+                    }
+                }
+                self.refresh();
+                return;
+            }
+            None => {}
+        }
         self.client.send(Request::Answer { id: id.to_string(), prompt_id: prompt_id as u64, answer });
         if let Some(t) = self.state.borrow_mut().tunnels.get_mut(id) {
             t.prompt = None;
@@ -755,6 +929,20 @@ impl App {
         ui.set_form_has_saved_password(p.is_some_and(|p| p.remember_password && secrets::load_password(&p.id).is_some()));
         ui.set_form_remember(p.is_none_or(|p| p.remember_password));
         ui.set_form_sso(p.is_some_and(|p| p.sso));
+        // Certificates in the user's store; a saved one that's gone is kept
+        // as a choice so saving doesn't silently drop it.
+        let mut certs = certs::list();
+        let saved = p.and_then(|p| p.client_cert.clone());
+        if let Some(uri) = &saved
+            && !certs.iter().any(|c| &c.uri == uri)
+        {
+            certs.push(certs::Cert { uri: uri.clone(), label: "Saved certificate (no longer in the Windows store)".into() });
+        }
+        let index = saved.as_ref().and_then(|u| certs.iter().position(|c| &c.uri == u)).map(|i| i as i32 + 1).unwrap_or(0);
+        let options: Vec<slint::SharedString> = std::iter::once("None".into()).chain(certs.iter().map(|c| c.label.clone().into())).collect();
+        ui.set_form_cert_options(ModelRc::new(VecModel::from(options)));
+        ui.set_form_cert_index(index);
+        st.cert_choices = certs.into_iter().map(|c| c.uri).collect();
         let source = p.map(source_of).unwrap_or(0);
         ui.set_form_source(source);
 
@@ -1021,6 +1209,9 @@ impl App {
                 return fail(format!("{e:#}"));
             }
         let server_cert_pin = existing.as_ref().filter(|p| p.gateway.as_deref() == Some(gateway.as_str())).and_then(|p| p.server_cert_pin.clone());
+        let client_cert = (protocol != Protocol::OpenVpn)
+            .then(|| usize::try_from(ui.get_form_cert_index() - 1).ok().and_then(|i| st.cert_choices.get(i).cloned()))
+            .flatten();
         st.store.upsert(Profile {
             id,
             name,
@@ -1035,6 +1226,7 @@ impl App {
             username: (!username.is_empty()).then_some(username),
             remember_password: remember,
             sso: matches!(protocol, Protocol::Fortinet | Protocol::GlobalProtect) && ui.get_form_sso(),
+            client_cert,
         });
         if let Err(e) = st.store.save() {
             return fail(format!("Couldn't save: {e:#}"));
@@ -1352,6 +1544,7 @@ fn prepare(p: &Profile, online: bool) -> Result<TunnelSpec, String> {
             group: p.group.clone(),
             server_cert_pin: p.server_cert_pin.clone(),
             sso: p.sso,
+            auth: None,
         });
     }
     let config = p

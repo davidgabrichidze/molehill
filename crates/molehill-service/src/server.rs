@@ -100,8 +100,8 @@ impl Manager {
                     let creds = username.zip(password);
                     tunnel::openvpn::run(mgr.clone(), id.clone(), name, config, creds, rx).await;
                 }
-                TunnelSpec::OpenConnect { protocol, server, username, password, group, server_cert_pin, sso } => {
-                    let spec = tunnel::openconnect::Spec { protocol, server, username, password, group, pin: server_cert_pin, sso };
+                TunnelSpec::OpenConnect { protocol, server, username, password, group, server_cert_pin, sso, auth } => {
+                    let spec = tunnel::openconnect::Spec { protocol, server, username, password, group, pin: server_cert_pin, sso, auth };
                     tunnel::openconnect::run(mgr.clone(), id.clone(), name, spec, rx).await;
                 }
             }
