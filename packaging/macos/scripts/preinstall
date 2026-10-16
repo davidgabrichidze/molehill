@@ -1,0 +1,9 @@
+#!/bin/sh
+# Stops the service (tunnels close cleanly) and Molehill before files are
+# replaced, and notes whether this is an update.
+if [ -e /opt/molehill/bin/molehill-service ]; then
+    touch /private/tmp/io.github.giorgobiani.molehill.upgrade
+fi
+launchctl bootout system/io.github.giorgobiani.molehill.service 2>/dev/null || true
+pkill -x molehill 2>/dev/null || true
+exit 0

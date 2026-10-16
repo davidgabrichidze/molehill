@@ -101,16 +101,33 @@ struct Api {
     set_client_cert: unsafe extern "C" fn(Vpn, *const c_char, *const c_char) -> c_int,
     set_option_value: unsafe extern "C" fn(*mut OcFormOpt, *const c_char) -> c_int,
     set_external_browser_callback: Option<unsafe extern "C" fn(Vpn, Option<BrowserCb>) -> c_int>,
+    /// The passphrase of a certificate file, when one is saved.
+    set_key_password: Option<unsafe extern "C" fn(Vpn, *const c_char) -> c_int>,
+    /// The bundled GnuTLS was built with Homebrew's CA file compiled in,
+    /// which a Mac without Homebrew doesn't have; trust comes from the
+    /// `.pkg`'s copy of the system roots instead.
+    #[cfg(target_os = "macos")]
+    set_system_trust: Option<unsafe extern "C" fn(Vpn, std::ffi::c_uint)>,
+    #[cfg(target_os = "macos")]
+    set_cafile: Option<unsafe extern "C" fn(Vpn, *const c_char) -> c_int>,
 }
 
 impl Api {
     fn load(dir: &std::path::Path) -> Result<Self> {
+        #[cfg(windows)]
         use libloading::os::windows::{LOAD_WITH_ALTERED_SEARCH_PATH, Library};
+        #[cfg(windows)]
         let path = dir.join("libopenconnect-5.dll");
         // Altered search path: its own DLLs (GnuTLS etc.) load from its folder.
+        #[cfg(windows)]
         let lib: libloading::Library = unsafe { Library::load_with_flags(&path, LOAD_WITH_ALTERED_SEARCH_PATH) }
             .with_context(|| format!("loading {}", path.display()))?
             .into();
+        // The bundled dylibs find each other through @loader_path.
+        #[cfg(target_os = "macos")]
+        let path = dir.join("libopenconnect.5.dylib");
+        #[cfg(target_os = "macos")]
+        let lib = unsafe { libloading::Library::new(&path) }.with_context(|| format!("loading {}", path.display()))?;
         macro_rules! sym {
             ($name:literal) => {
                 *unsafe { lib.get(concat!($name, "\0").as_bytes()) }.with_context(|| format!("libopenconnect has no {}", $name))?
@@ -132,6 +149,11 @@ impl Api {
             set_client_cert: sym!("openconnect_set_client_cert"),
             set_option_value: sym!("openconnect_set_option_value"),
             set_external_browser_callback: unsafe { lib.get(b"openconnect_set_external_browser_callback\0") }.ok().map(|s| *s),
+            set_key_password: unsafe { lib.get(b"openconnect_set_key_password\0") }.ok().map(|s| *s),
+            #[cfg(target_os = "macos")]
+            set_system_trust: unsafe { lib.get(b"openconnect_set_system_trust\0") }.ok().map(|s| *s),
+            #[cfg(target_os = "macos")]
+            set_cafile: unsafe { lib.get(b"openconnect_set_cafile\0") }.ok().map(|s| *s),
             _lib: lib,
         })
     }
@@ -257,6 +279,12 @@ pub struct FillPlan {
 /// without asking. The saved password goes into one password field, once;
 /// anything else (OTP, second password, a challenge, a message-only or
 /// select-only form) is shown to the user.
+/// The forms GnuTLS shows for a certificate file's passphrase
+/// (`request_passphrase` in openconnect's gnutls.c).
+pub fn is_cert_passphrase_form(auth_id: &str) -> bool {
+    matches!(auth_id, "openconnect_pkcs12" | "openconnect_secondary_pkcs12" | "openconnect_pem" | "openconnect_secondary_pem")
+}
+
 pub fn plan_form(
     fields: &[FieldInfo],
     has_error: bool,
@@ -416,11 +444,14 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         emit(&HelperEvent::PasswordRejected);
     }
 
+    // A certificate file's passphrase is the user's to type (or comes from
+    // `cert_password`, set up front); never the saved login password.
+    let cert_form = is_cert_passphrase_form(&auth_id);
     let plan = plan_form(
         &infos,
         error.is_some() && !retry,
-        ctx.req.username.as_deref(),
-        ctx.req.password.as_deref(),
+        ctx.req.username.as_deref().filter(|_| !cert_form),
+        ctx.req.password.as_deref().filter(|_| !cert_form),
         ctx.password_field.is_some() && !retry,
         ctx.auto_submits,
     );
@@ -552,12 +583,49 @@ unsafe extern "C" fn on_browser(_: Vpn, uri: *const c_char, _: *mut c_void) -> c
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 unsafe extern "C" fn on_progress(privdata: *mut c_void, level: c_int, fmt: *const c_char, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) {
     // Debug output too (it explains odd server forms), minus anything secret.
     if level > PRG_DEBUG || fmt.is_null() {
         return;
     }
     let line = format_c(unsafe { CStr::from_ptr(fmt) }.to_bytes(), &[a1, a2, a3, a4, a5, a6]);
+    unsafe { progress_line(privdata, level, line) };
+}
+
+// macOS: the C shim (src/oc_progress.c) is the variadic callback; it formats
+// the message and calls `on_progress_line` with the result.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn molehill_set_progress_line(f: unsafe extern "C" fn(*mut c_void, c_int, *const c_char));
+    fn molehill_progress(privdata: *mut c_void, level: c_int, fmt: *const c_char, ...);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn on_progress_line(privdata: *mut c_void, level: c_int, line: *const c_char) {
+    if level > PRG_DEBUG || line.is_null() {
+        return;
+    }
+    let line = unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned();
+    unsafe { progress_line(privdata, level, line) };
+}
+
+/// The progress callback to hand libopenconnect.
+#[cfg(windows)]
+fn progress_cb() -> ProgressCb {
+    on_progress
+}
+
+#[cfg(target_os = "macos")]
+fn progress_cb() -> ProgressCb {
+    unsafe { molehill_set_progress_line(on_progress_line) };
+    // SAFETY: only ever called by libopenconnect, which calls it as the
+    // variadic function it really is.
+    unsafe { std::mem::transmute::<unsafe extern "C" fn(*mut c_void, c_int, *const c_char, ...), ProgressCb>(molehill_progress) }
+}
+
+/// A formatted progress message: logged, minus anything secret.
+unsafe fn progress_line(privdata: *mut c_void, level: c_int, line: String) {
     let line = line.trim_end().to_string();
     if line.is_empty() {
         return;
@@ -710,13 +778,21 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
     // 404 for anything else, and the HTML fallback drops 2FA (SMS) fields.
     let agent = cstring("AnyConnect-compatible OpenConnect VPN Agent");
     let vpn = unsafe {
-        (c.api.vpninfo_new)(agent.as_ptr(), Some(on_validate_cert), Some(on_write_config), Some(on_form), Some(on_progress), ctx as *mut c_void)
+        (c.api.vpninfo_new)(agent.as_ptr(), Some(on_validate_cert), Some(on_write_config), Some(on_form), Some(progress_cb()), ctx as *mut c_void)
     };
     if vpn.is_null() {
         let ctx = unsafe { Box::from_raw(ctx) };
         return (Err(anyhow!("libopenconnect couldn't start")), ctx.input);
     }
     c.vpn = vpn;
+    #[cfg(target_os = "macos")]
+    if let (Some(trust), Some(cafile)) = (c.api.set_system_trust, c.api.set_cafile) {
+        let file = cstring(&format!("{}/cacert.pem", molehill_core::paths::ENGINES_DIR));
+        unsafe {
+            trust(vpn, 0);
+            cafile(vpn, file.as_ptr());
+        }
+    }
     let result = (|| {
         if unsafe { (c.api.set_protocol)(vpn, protocol.as_ptr()) } != 0 {
             bail!("OpenConnect doesn't support the {} protocol", c.req.protocol);
@@ -731,6 +807,11 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
             let (cert_c, key_c) = (cstring(cert), cstring(&key));
             if unsafe { (c.api.set_client_cert)(vpn, cert_c.as_ptr(), key_c.as_ptr()) } != 0 {
                 bail!("The client certificate couldn't be loaded");
+            }
+            // A wrong one makes GnuTLS ask through the form callback.
+            if let (Some(pass), Some(set_pass)) = (c.req.cert_password.as_deref(), c.api.set_key_password) {
+                let pass_c = cstring(pass);
+                unsafe { set_pass(vpn, pass_c.as_ptr()) };
             }
         }
         if let Some(set_browser) = c.api.set_external_browser_callback {
@@ -797,6 +878,15 @@ mod tests {
 
     fn plan(fields: &[FieldInfo], error: bool, password_used: bool) -> FillPlan {
         plan_form(fields, error, Some("shota"), Some("s3cret"), password_used, 0)
+    }
+
+    /// The passphrase form gets nothing from the saved login; it is asked.
+    #[test]
+    fn certificate_passphrase_is_never_the_login_password() {
+        assert!(is_cert_passphrase_form("openconnect_pkcs12") && !is_cert_passphrase_form("main"));
+        let fields = [f("openconnect_pkcs12", FieldKind::Password)];
+        let p = plan_form(&fields, false, None, None, false, 0);
+        assert!(p.fills.is_empty() && !p.auto_submit && p.password_field.is_none());
     }
 
     #[test]
@@ -871,5 +961,29 @@ mod redact_tests {
         assert_eq!(super::redact("Got cookie=abcdef"), "Got cookie=…");
         assert_eq!(super::redact("Got session=12345 for user"), "Got session=…");
         assert_eq!(super::redact("Session terminated by server"), "Session terminated by server");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod progress_shim_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static LINES: Mutex<Vec<(c_int, String)>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn capture(_: *mut c_void, level: c_int, line: *const c_char) {
+        let line = unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned();
+        LINES.lock().unwrap().push((level, line));
+    }
+
+    /// The shim must format real variadic arguments (strings, ints, longs)
+    /// the way C does; this is what broke with fixed arguments on arm64.
+    #[test]
+    fn shim_formats_variadic_arguments() {
+        unsafe { molehill_set_progress_line(capture) };
+        let fmt = cstring("Connected to %s:%d (%ld bytes, %u%%)");
+        let host = cstring("vpn.example.com");
+        unsafe { molehill_progress(std::ptr::null_mut(), 1, fmt.as_ptr(), host.as_ptr(), 443 as c_int, 123_456_789_012i64, 7u32) };
+        assert_eq!(LINES.lock().unwrap().pop(), Some((1, "Connected to vpn.example.com:443 (123456789012 bytes, 7%)".into())));
     }
 }

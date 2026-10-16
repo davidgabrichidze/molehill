@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Starts Molehill in the menu bar at login. Installed to
+     /Library/LaunchAgents by the .pkg; each user can switch it off in
+     System Settings > General > Login Items. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.github.giorgobiani.molehill</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Molehill.app/Contents/MacOS/molehill</string>
+        <string>--hidden</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- Quitting Molehill means quitting it. -->
+    <key>KeepAlive</key>
+    <false/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <!-- Self-update starts the installer and quits; the installer must
+         outlive the app. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

@@ -1,0 +1,54 @@
+# Bundles OpenVPN and OpenConnect for macOS from Homebrew, per architecture,
+# and keeps the result as a pre-release (tag engines-<openvpn>-<openconnect>),
+# so Molehill releases can keep using a known bundle even after Homebrew
+# moves on (or stops building for Intel). To use one, put its tag in
+# packaging/macos/engines.lock.
+#
+# Before pinning a new OpenVPN version, check its manual for new script
+# hooks and add them to BLOCKED_MACOS in crates/molehill-core/src/ovpn.rs.
+name: Engines
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Bundle (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bundle
+        id: bundle
+        run: |
+          packaging/macos/bundle-engines.sh dist/engines
+          ov=$(dist/engines/openvpn --version | head -n 1 | awk '{print $2}')
+          oc=$(dist/engines/openconnect --version 2>&1 | sed -n 's/^OpenConnect version v//p')
+          tag="engines-$ov-$oc"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          tar -czf "dist/$tag-${{ matrix.arch }}.tar.gz" -C dist/engines .
+
+      - name: Sources
+        if: matrix.arch == 'arm64'
+        run: packaging/macos/engine-sources.sh "dist/${{ steps.bundle.outputs.tag }}-sources.tar"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=${{ steps.bundle.outputs.tag }}
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --prerelease --title "macOS engines ($tag)" \
+              --notes "OpenVPN and OpenConnect for Molehill's macOS package. Not a Molehill release." ||
+            gh release view "$tag" >/dev/null
+          gh release upload "$tag" --clobber dist/$tag-*

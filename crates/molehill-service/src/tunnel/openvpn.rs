@@ -25,9 +25,45 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 use crate::components;
+#[cfg(target_os = "macos")]
+use crate::compat::CommandExt as _;
 use crate::server::{Manager, TunnelCmd, status};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Windows: built-in programs only; OpenVPN's driver applies DNS itself.
+#[cfg(windows)]
+const SCRIPT_SECURITY: &str = "1";
+/// macOS: OpenVPN sets routes but not DNS, so Molehill's own `dns-up` hook
+/// must be allowed to run. Profiles still can't name a script (`ovpn.rs`).
+#[cfg(target_os = "macos")]
+const SCRIPT_SECURITY: &str = "2";
+
+#[cfg(windows)]
+fn script_hooks(_id: &str) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+
+/// `--up`/`--down` running this binary's `dns-up`/`dns-down`. OpenVPN splits
+/// the command like a shell would, so the path is single-quoted.
+#[cfg(target_os = "macos")]
+fn script_hooks(id: &str) -> Result<Vec<String>> {
+    let exe = std::env::current_exe()?;
+    let exe = exe.to_str().filter(|p| !p.contains('\'') && !p.contains('\\')).ok_or_else(|| anyhow!("unusable service path {}", exe.display()))?;
+    Ok(hook_args(exe, id))
+}
+
+#[cfg(target_os = "macos")]
+fn hook_args(exe: &str, id: &str) -> Vec<String> {
+    vec![
+        "--up".into(),
+        format!("'{exe}' dns-up {id}"),
+        "--down".into(),
+        format!("'{exe}' dns-down {id}"),
+        // Run the hook again when a reconnect brings new settings.
+        "--up-restart".into(),
+    ]
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Purpose {
@@ -194,8 +230,11 @@ impl Session {
         std::fs::write(&pw_path, &mgmt_password).context("writing management password")?;
         self.files = vec![cfg_path.clone(), pw_path.clone()];
 
+        #[cfg(windows)]
         let busy = self.mgr.active_tunnels();
+        #[cfg(windows)]
         let cfg_for_adapter = config.clone();
+        #[cfg(windows)]
         tokio::task::spawn_blocking(move || ensure_adapter(&cfg_for_adapter, busy)).await.ok();
 
         let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
@@ -205,7 +244,8 @@ impl Session {
             .args(["--management", "127.0.0.1", &port.to_string()])
             .arg(&pw_path)
             .args(["--management-hold", "--management-query-passwords", "--auth-retry", "interact"])
-            .args(["--script-security", "1", "--verb", "3", "--suppress-timestamps"])
+            .args(["--script-security", SCRIPT_SECURITY, "--verb", "3", "--suppress-timestamps"])
+            .args(script_hooks(&self.id)?)
             .args(["--setenv", "IV_GUI_VER", &format!("Molehill_{APP_VERSION}")])
             .args(["--setenv", "IV_SSO", "openurl,webauth,crtext"])
             .current_dir(&run_dir)
@@ -549,6 +589,7 @@ impl Session {
 
 /// Makes sure a free network adapter exists for one more tunnel. OpenVPN
 /// needs one adapter per running tunnel and the MSI only creates one.
+#[cfg(windows)]
 fn ensure_adapter(config: &str, active_tunnels: usize) {
     use std::os::windows::process::CommandExt;
     let Some(tapctl) = components::openvpn_bin_dir().map(|d| d.join("tapctl.exe")) else { return };
@@ -567,5 +608,37 @@ fn ensure_adapter(config: &str, active_tunnels: usize) {
             .args(["create", "--hwid", hwid, "--name", &name])
             .creation_flags(CREATE_NO_WINDOW)
             .status();
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    /// OpenVPN's command splitting, reduced to what matters here: single
+    /// quotes group, whitespace separates.
+    fn split(cmd: &str) -> Vec<String> {
+        let (mut out, mut cur, mut quoted) = (Vec::new(), String::new(), false);
+        for c in cmd.chars() {
+            match c {
+                '\'' => quoted = !quoted,
+                c if c.is_whitespace() && !quoted => {
+                    if !cur.is_empty() {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                }
+                c => cur.push(c),
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+        out
+    }
+
+    #[test]
+    fn hook_survives_a_path_with_spaces() {
+        let args = super::hook_args("/Users/a b/molehill/target/debug/molehill-service", "3f2a-01");
+        assert_eq!(args[0], "--up");
+        assert_eq!(split(&args[1]), vec!["/Users/a b/molehill/target/debug/molehill-service", "dns-up", "3f2a-01"]);
+        assert_eq!(split(&args[3]), vec!["/Users/a b/molehill/target/debug/molehill-service", "dns-down", "3f2a-01"]);
     }
 }

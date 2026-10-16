@@ -8,7 +8,10 @@
 //! (the tunnel itself doesn't need the certificate).
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "macos")]
+use crate::compat::CommandExt as _;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 use molehill_core::ocauth::{AuthRequest, HelperAnswer, HelperEvent};
@@ -32,7 +35,15 @@ pub enum Message {
 impl LocalAuth {
     pub fn start(req: &AuthRequest, on_message: impl Fn(Message) + Send + 'static) -> Result<Self, String> {
         // molehill-service.exe sits next to the app (installed or built).
+        #[cfg(windows)]
         let exe = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("molehill-service.exe");
+        // Next to the app when built from source; installed by the .pkg otherwise.
+        #[cfg(target_os = "macos")]
+        let exe = std::env::current_exe()
+            .map_err(|e| e.to_string())?
+            .with_file_name("molehill-service")
+            .canonicalize()
+            .unwrap_or_else(|_| "/opt/molehill/bin/molehill-service".into());
         let mut child = Command::new(&exe)
             .arg("oc-auth")
             .creation_flags(0x0800_0000)

@@ -2,7 +2,8 @@
 //!
 //! The release workflow (`.github/workflows/release.yml`) publishes
 //! `molehill-setup-<version>.exe` and `molehill-setup-<version>.exe.sha256`
-//! on every `v*` tag. The app looks at the latest release (drafts and
+//! on every `v*` tag, and for macOS `Molehill-<version>-arm64.pkg` and
+//! `Molehill-<version>-x86_64.pkg`, each with its `.sha256`. The app looks at the latest release (drafts and
 //! pre-releases excluded), and when it's newer offers it; the installer is
 //! downloaded, checked against its published SHA-256, and run.
 
@@ -14,7 +15,12 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{APP_VERSION, version};
 
-pub const REPO: &str = "giorgobiani/molehill";
+/// Where releases come from. A test build can point at a fork by setting
+/// `MOLEHILL_UPDATE_REPO` at compile time; official builds don't.
+pub const REPO: &str = match option_env!("MOLEHILL_UPDATE_REPO") {
+    Some(repo) => repo,
+    None => "giorgobiani/molehill",
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Release {
@@ -66,7 +72,7 @@ fn parse_release(json: &str) -> Result<Option<Release>> {
             pred(name).then(|| (name.to_string(), url.to_string()))
         })
     };
-    let Some((installer_name, installer_url)) = find(&|n| n.starts_with("molehill-setup-") && n.ends_with(".exe")) else {
+    let Some((installer_name, installer_url)) = find(&|n| is_installer(n, &version)) else {
         return Ok(None);
     };
     let Some((_, checksum_url)) = find(&|n| n == format!("{installer_name}.sha256")) else {
@@ -80,6 +86,24 @@ fn parse_release(json: &str) -> Result<Option<Release>> {
         checksum_url,
     }))
 }
+
+/// The installer for this platform among a release's files.
+#[cfg(windows)]
+fn is_installer(name: &str, _version: &str) -> bool {
+    name.starts_with("molehill-setup-") && name.ends_with(".exe")
+}
+
+/// The `.pkg` for this Mac's architecture, by its versioned name (the
+/// release also carries fixed-name copies for permanent download links).
+#[cfg(target_os = "macos")]
+fn is_installer(name: &str, version: &str) -> bool {
+    name == format!("Molehill-{version}-{}.pkg", PKG_ARCH)
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub const PKG_ARCH: &str = "arm64";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub const PKG_ARCH: &str = "x86_64";
 
 /// Downloads the installer into `dir` and checks it against the published
 /// checksum. `progress` gets 0–100.
@@ -237,6 +261,8 @@ mod tests {
         assert_eq!(s.hex(), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
     }
 
+    /// The Windows installer and its checksum (macOS: picks_this_macs_package).
+    #[cfg(windows)]
     #[test]
     fn reads_a_github_release() {
         let json = r#"{"tag_name":"v0.2.0","html_url":"https://github.com/giorgobiani/molehill/releases/tag/v0.2.0",
@@ -246,7 +272,29 @@ mod tests {
         assert_eq!(r.version, "0.2.0");
         assert_eq!(r.installer_url, "https://x/setup.exe");
         assert_eq!(r.checksum_url, "https://x/setup.exe.sha256");
-        // A release still uploading its files isn't offered.
+    }
+
+    /// A release still uploading its files isn't offered.
+    #[test]
+    fn skips_a_release_without_its_installer() {
         assert_eq!(parse_release(r#"{"tag_name":"v0.3.0","assets":[]}"#).unwrap(), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn picks_this_macs_package() {
+        let json = r#"{"tag_name":"v0.3.0","html_url":"https://x/r",
+            "assets":[{"name":"molehill-setup-0.3.0.exe","browser_download_url":"https://x/setup.exe"},
+                      {"name":"Molehill-arm64.pkg","browser_download_url":"https://x/fixed-arm"},
+                      {"name":"Molehill-x86_64.pkg","browser_download_url":"https://x/fixed-intel"},
+                      {"name":"Molehill-0.3.0-arm64.pkg","browser_download_url":"https://x/arm"},
+                      {"name":"Molehill-0.3.0-arm64.pkg.sha256","browser_download_url":"https://x/arm.sha256"},
+                      {"name":"Molehill-0.3.0-x86_64.pkg","browser_download_url":"https://x/intel"},
+                      {"name":"Molehill-0.3.0-x86_64.pkg.sha256","browser_download_url":"https://x/intel.sha256"}]}"#;
+        let r = parse_release(json).unwrap().unwrap();
+        let expect = if PKG_ARCH == "arm64" { "https://x/arm" } else { "https://x/intel" };
+        assert_eq!(r.installer_url, expect);
+        assert_eq!(r.checksum_url, format!("{expect}.sha256"));
+        assert_eq!(r.installer_name, format!("Molehill-0.3.0-{PKG_ARCH}.pkg"));
     }
 }

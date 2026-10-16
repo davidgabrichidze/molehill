@@ -1,11 +1,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client;
+#[cfg(target_os = "macos")]
+#[path = "compat_macos.rs"]
+mod compat;
 mod certs;
+#[cfg(windows)]
+mod gpcallback;
+#[cfg(target_os = "macos")]
+#[path = "gpcallback_macos.rs"]
 mod gpcallback;
 mod localauth;
+#[cfg(windows)]
 mod selfupdate;
+#[cfg(target_os = "macos")]
+#[path = "selfupdate_macos.rs"]
+mod selfupdate;
+// The taskbar badge and window icon use it on Windows; the tray on both.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod logo;
+#[cfg(windows)]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "platform_macos.rs"]
 mod platform;
 mod settings;
 mod tray;
@@ -77,6 +94,8 @@ struct State {
     pending_specs: HashMap<String, TunnelSpec>,
     /// The editor's certificate choices (after "None"), as cert URIs.
     cert_choices: Vec<String>,
+    /// A certificate passphrase typed during a sign-in, saved once it works.
+    typed_cert_passwords: HashMap<String, String>,
 }
 
 struct App {
@@ -119,7 +138,13 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     selfupdate::set_app_id();
+    #[cfg(target_os = "macos")]
+    {
+        platform::select_backend();
+        platform::install_event_handlers();
+    }
     // COM on the UI thread, for the taskbar badge (ITaskbarList3).
+    #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
     // A crash during a GlobalProtect sign-in leaves the handler registered.
     gpcallback::unregister();
@@ -166,13 +191,30 @@ fn main() -> anyhow::Result<()> {
     app.apply_theme();
     app.refresh_subtitles();
 
+    #[cfg(windows)]
     match Tray::new(|action| on_ui(move |app| app.on_tray(action))) {
         Ok(t) => *app.tray.borrow_mut() = Some(t),
         Err(e) => eprintln!("tray icon unavailable: {e:#}"),
     }
+    // AppKit's status bar exists once the event loop runs.
+    #[cfg(target_os = "macos")]
+    on_ui(|app| {
+        match Tray::new(|action| on_ui(move |app| app.on_tray(action))) {
+            Ok(t) => *app.tray.borrow_mut() = Some(t),
+            Err(e) => eprintln!("menu bar icon unavailable: {e:#}"),
+        }
+        app.refresh();
+    });
 
     // Closing the window keeps tunnels up and Molehill in the tray.
+    #[cfg(windows)]
     app.ui.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    // …and on macOS takes the Dock icon away with it.
+    #[cfg(target_os = "macos")]
+    app.ui.window().on_close_requested(|| {
+        platform::window_hidden();
+        slint::CloseRequestResponse::HideWindow
+    });
 
     // Ticks connected-time counters, and re-checks component versions twice a day.
     let ticker = slint::Timer::default();
@@ -230,6 +272,7 @@ impl App {
 
     /// From the window procedure after a move or resize; skipped (not
     /// crashed) if the state happens to be busy.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn remember_window(&self, pos: (i32, i32), height: f64) {
         let Ok(mut st) = self.state.try_borrow_mut() else { return };
         st.settings.window_pos = Some(pos);
@@ -313,8 +356,18 @@ impl App {
 
     fn show(&self) {
         let _ = self.ui.show();
+        #[cfg(target_os = "macos")]
+        platform::window_shown();
         // The native window only exists once the event loop has processed the show.
         platform::when_ready(self.ui.as_weak(), platform::MAIN_TITLE, 25, platform::style_main);
+    }
+
+    /// A URL macOS opened with Molehill (its Info.plist schemes).
+    #[cfg(target_os = "macos")]
+    fn url_opened(&self, url: String) {
+        if url.starts_with(gpcallback::SCHEME) {
+            self.client.send(Request::SsoCallback { url });
+        }
     }
 
     fn on_tray(&self, action: TrayAction) {
@@ -324,6 +377,14 @@ impl App {
                 self.show();
             }
             TrayAction::Menu(x, y) => self.show_menu(x, y),
+            #[cfg(target_os = "macos")]
+            TrayAction::Toggle(id) => self.toggle(&id),
+            #[cfg(target_os = "macos")]
+            TrayAction::DisconnectAll => self.disconnect_all(),
+            #[cfg(target_os = "macos")]
+            TrayAction::Quit => {
+                let _ = slint::quit_event_loop();
+            }
         }
     }
 
@@ -429,6 +490,8 @@ impl App {
         });
         let a = app.clone();
         ui.on_delete_profile(move || a().map(|s| s.delete_profile()).unwrap_or_default());
+        let a = app.clone();
+        ui.on_form_cert_picked(move |index| a().map(|s| s.cert_picked(index)).unwrap_or_default());
         let a = app.clone();
         ui.on_cancel_editor(move || a().map(|s| s.cancel_editor()).unwrap_or_default());
 
@@ -660,6 +723,7 @@ impl App {
                     saml_login: false,
                     key: Some(molehill_core::ocauth::key_for_cert(&cert)),
                     cert: Some(cert),
+                    cert_password: molehill_core::cert_secrets::load(&p.id),
                 };
                 let id = p.id.clone();
                 match localauth::LocalAuth::start(&req, move |m| {
@@ -714,6 +778,10 @@ impl App {
             localauth::Message::Event(HelperEvent::Done(result)) => {
                 let mut st = self.state.borrow_mut();
                 st.local_auth.remove(id);
+                let typed = st.typed_cert_passwords.remove(id);
+                if let Some(pass) = typed.filter(|_| st.store.get(id).is_some_and(|p| p.remember_password)) {
+                    let _ = molehill_core::cert_secrets::save(id, &pass);
+                }
                 let spec = st.pending_specs.remove(id);
                 let name = st.store.get(id).map(|p| p.name.clone()).unwrap_or_default();
                 drop(st);
@@ -726,6 +794,7 @@ impl App {
             localauth::Message::Event(HelperEvent::Failed { message }) => {
                 let mut st = self.state.borrow_mut();
                 st.local_auth.remove(id);
+                st.typed_cert_passwords.remove(id);
                 st.pending_specs.remove(id);
                 drop(st);
                 if message == "Cancelled" {
@@ -774,6 +843,14 @@ impl App {
         // A sign-in running here takes the answer itself.
         let local = {
             let mut st = self.state.borrow_mut();
+            // A certificate passphrase (GnuTLS names the field after its
+            // form): keep it until the sign-in works, then save it.
+            if st.local_auth.contains_key(id)
+                && let Answer::Form { values } = &answer
+                && let Some((_, pass)) = values.iter().find(|(name, _)| is_cert_passphrase_field(name))
+            {
+                st.typed_cert_passwords.insert(id.to_string(), pass.clone());
+            }
             match st.local_auth.get_mut(id) {
                 Some(la) => {
                     use molehill_core::ocauth::HelperAnswer;
@@ -936,10 +1013,16 @@ impl App {
         if let Some(uri) = &saved
             && !certs.iter().any(|c| &c.uri == uri)
         {
-            certs.push(certs::Cert { uri: uri.clone(), label: "Saved certificate (no longer in the Windows store)".into() });
+            certs.push(certs::Cert { uri: uri.clone(), label: certs::saved_label(uri) });
         }
         let index = saved.as_ref().and_then(|u| certs.iter().position(|c| &c.uri == u)).map(|i| i as i32 + 1).unwrap_or(0);
+        #[cfg(windows)]
         let options: Vec<slint::SharedString> = std::iter::once("None".into()).chain(certs.iter().map(|c| c.label.clone().into())).collect();
+        #[cfg(target_os = "macos")]
+        let options: Vec<slint::SharedString> = std::iter::once("None".into())
+            .chain(certs.iter().map(|c| c.label.clone().into()))
+            .chain(std::iter::once(certs::CHOOSE_FILE.into()))
+            .collect();
         ui.set_form_cert_options(ModelRc::new(VecModel::from(options)));
         ui.set_form_cert_index(index);
         st.cert_choices = certs.into_iter().map(|c| c.uri).collect();
@@ -1212,6 +1295,11 @@ impl App {
         let client_cert = (protocol != Protocol::OpenVpn)
             .then(|| usize::try_from(ui.get_form_cert_index() - 1).ok().and_then(|i| st.cert_choices.get(i).cloned()))
             .flatten();
+        // A different certificate: the old one's copy and passphrase go.
+        if let Some(old) = existing.as_ref().and_then(|p| p.client_cert.clone()).filter(|old| client_cert.as_ref() != Some(old)) {
+            certs::forget(&old);
+            let _ = molehill_core::cert_secrets::delete(&id);
+        }
         st.store.upsert(Profile {
             id,
             name,
@@ -1238,6 +1326,41 @@ impl App {
         self.refresh();
     }
 
+    /// The editor's certificate choice changed. On macOS its last entry opens
+    /// the file dialog; on Windows every entry is a store certificate.
+    #[cfg(windows)]
+    fn cert_picked(&self, _index: i32) {}
+
+    #[cfg(target_os = "macos")]
+    fn cert_picked(&self, index: i32) {
+        let count = self.state.borrow().cert_choices.len();
+        if usize::try_from(index - 1).ok() != Some(count) {
+            return;
+        }
+        let picked = rfd::FileDialog::new()
+            .set_title("Choose the client certificate")
+            .add_filter("Certificate (.p12, .pfx)", &["p12", "pfx"])
+            .pick_file();
+        let mut st = self.state.borrow_mut();
+        match picked.map(|p| certs::import(&p)) {
+            Some(Ok(uri)) => {
+                st.cert_choices.push(uri.clone());
+                let options: Vec<slint::SharedString> = std::iter::once("None".into())
+                    .chain(st.cert_choices.iter().map(|u| certs::saved_label(u).into()))
+                    .chain(std::iter::once(certs::CHOOSE_FILE.into()))
+                    .collect();
+                self.ui.set_form_cert_options(ModelRc::new(VecModel::from(options)));
+                self.ui.set_form_cert_index(count as i32 + 1);
+            }
+            Some(Err(e)) => {
+                self.ui.set_form_error(format!("Couldn't copy the certificate: {e}").into());
+                self.ui.set_form_cert_index(0);
+            }
+            // Cancelled: back to the previous choice, or None.
+            None => self.ui.set_form_cert_index(if count > 0 { count as i32 } else { 0 }),
+        }
+    }
+
     fn delete_profile(&self) {
         let name = self.ui.get_form_name().to_string();
         // A plain Yes/No: custom button labels fall back to OK/Cancel on a
@@ -1258,6 +1381,10 @@ impl App {
         self.client.send(Request::Disconnect { id: id.clone() });
         if let Some(p) = st.store.remove(&id) {
             let _ = secrets::delete_password(&id);
+            let _ = molehill_core::cert_secrets::delete(&id);
+            if let Some(cert) = &p.client_cert {
+                certs::forget(cert);
+            }
             if let Some(cfg) = p.config {
                 let _ = std::fs::remove_file(cfg);
             }
@@ -1504,6 +1631,12 @@ impl App {
         self.menu.set_mark_tint(tint);
         if let Some(tray) = self.tray.borrow().as_ref() {
             tray.update(mark, &format!("Molehill · {summary}"));
+            #[cfg(target_os = "macos")]
+            tray.set_menu(tray::MenuModel {
+                summary: summary.to_string(),
+                any_on: !connected.is_empty(),
+                tunnels: self.connections.iter().map(|c| (c.id.to_string(), c.name.to_string(), c.state.to_string())).collect(),
+            });
         }
         self.menu.set_summary(summary.into());
         self.menu.set_any_on(!connected.is_empty());
@@ -1633,4 +1766,10 @@ fn form_model(fields: &[FormField], username: Option<&str>) -> Rc<VecModel<FormF
         })
         .collect();
     Rc::new(VecModel::from(items))
+}
+
+/// The password field GnuTLS shows for a certificate file's passphrase
+/// (openconnect's `request_passphrase`).
+fn is_cert_passphrase_field(name: &str) -> bool {
+    matches!(name, "openconnect_pkcs12" | "openconnect_secondary_pkcs12" | "openconnect_pem" | "openconnect_secondary_pem")
 }

@@ -35,3 +35,28 @@ jobs:
 
       - name: Release build
         run: cargo build --release --workspace --locked
+
+  macos:
+    name: Build, lint, test (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Release build (Apple Silicon)
+        run: cargo build --release --workspace --locked --target aarch64-apple-darwin
+
+      - name: Release build (Intel)
+        run: cargo build --release --workspace --locked --target x86_64-apple-darwin

@@ -10,15 +10,24 @@ molehill-core.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-windows.workspace = true
 open = "5"
 raw-window-handle = "0.6"
 rfd = "0.17"
 slint = { version = "1.18", features = ["raw-window-handle-06", "renderer-software", "unstable-winit-030"] }
 tray-icon = "0.26"
 png = "0.18"
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 tauri-winrt-notification = "0.8"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAppleEventDescriptor", "NSAppleEventManager", "NSArray", "NSBundle", "NSError", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder", "NSRunningApplication"] }
 
 [build-dependencies]
 slint-build = "1.18"

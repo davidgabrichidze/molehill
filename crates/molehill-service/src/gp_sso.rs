@@ -85,16 +85,39 @@ pub fn sso(base: &str, pin: &str, req: &AuthRequest, mut answer: impl FnMut() ->
         group: req.group.clone(),
         cert: req.cert.clone(),
         key: req.key.clone(),
+        cert_password: req.cert_password.clone(),
     })
+}
+
+/// "15.1", from `sw_vers`.
+#[cfg(target_os = "macos")]
+fn macos_version() -> String {
+    std::process::Command::new("/usr/bin/sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+        .unwrap_or_else(|| "15.0".into())
 }
 
 /// Portal first, then gateway, like libopenconnect.
 fn prelogin(base: &str, pin: &str) -> Result<Saml> {
+    // macOS: what libopenconnect reports there by default (os "mac-intel"),
+    // so the prelogin and the tunnel describe the same client.
+    #[cfg(target_os = "macos")]
+    let mac_version = format!("Apple Mac OS X {}", macos_version());
     let query = [
         ("tmp", "tmp"),
         ("clientVer", "4100"),
+        #[cfg(windows)]
         ("clientos", "Windows"),
+        #[cfg(windows)]
         ("os-version", "Microsoft Windows 10 Pro , 64-bit"),
+        #[cfg(target_os = "macos")]
+        ("clientos", "Mac"),
+        #[cfg(target_os = "macos")]
+        ("os-version", mac_version.as_str()),
         ("ipv6-support", "yes"),
         ("default-browser", "2"),
         ("cas-support", "yes"),

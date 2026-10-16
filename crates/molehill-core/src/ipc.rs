@@ -6,7 +6,18 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(windows)]
 pub const PIPE_NAME: &str = r"\\.\pipe\molehill";
+/// Unix socket the macOS daemon listens on (`root:staff`, mode 0660).
+#[cfg(target_os = "macos")]
+pub const SOCKET_PATH: &str = "/var/run/molehill.sock";
+
+/// The socket to use: `MOLEHILL_SOCKET` overrides it, for running
+/// `molehill-service run` without root during development.
+#[cfg(target_os = "macos")]
+pub fn socket_path() -> std::path::PathBuf {
+    std::env::var_os("MOLEHILL_SOCKET").map(Into::into).unwrap_or_else(|| SOCKET_PATH.into())
+}
 
 /// App → service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
