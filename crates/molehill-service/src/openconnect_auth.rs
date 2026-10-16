@@ -224,6 +224,9 @@ struct Ctx {
     /// Selects the user answered in this sign-in (by field name), so the form
     /// the server sends back after a group change doesn't ask again.
     picked: std::collections::HashSet<String>,
+    /// What the user typed into a form whose group they changed: the server
+    /// answers a group change with a fresh form, which gets these back.
+    carry: Vec<(String, String)>,
     /// The server sent a SAML form while in password mode.
     sso_needed: bool,
     last_error: Option<String>,
@@ -420,6 +423,26 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         })
         .collect();
 
+    // The fresh form after the user changed group: put back what they had
+    // typed, and send it if that fills every field.
+    if !ctx.carry.is_empty() && error.is_none() {
+        let carry = std::mem::take(&mut ctx.carry);
+        let mut complete = true;
+        for (i, &op) in opts.iter().enumerate() {
+            if infos[i].kind == FieldKind::Select {
+                continue;
+            }
+            match carry.iter().find(|(n, _)| *n == infos[i].name) {
+                Some((_, v)) => ctx.set(op, v),
+                None => complete = false,
+            }
+        }
+        if complete {
+            emit(&HelperEvent::Log { line: format!("Server form \"{auth_id}\" for the new group: filled in with what you typed") });
+            return OC_FORM_RESULT_OK;
+        }
+    }
+
     let back_to_login = ctx.password_form.as_deref() == Some(auth_id.as_str());
     if !back_to_login && ctx.password_form.is_some() {
         ctx.password_accepted = true;
@@ -518,6 +541,18 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
                     let choices = select_choices(form.authgroup_opt);
                     if let Some(c) = choices.iter().position(|(n, _)| n == value)
                         && c as c_int != form.authgroup_selection {
+                            // Keep what was typed (and what Molehill filled) for the
+                            // new form, so the user doesn't type it all again.
+                            ctx.carry = opts
+                                .iter()
+                                .enumerate()
+                                .filter(|(j, _)| infos[*j].kind != FieldKind::Select)
+                                .filter_map(|(j, &o)| {
+                                    let typed = values.iter().find(|(n, _)| *n == infos[j].name).map(|(_, v)| v.clone()).filter(|v| !v.is_empty());
+                                    let current = cstr(unsafe { (*o).value });
+                                    typed.or(current).map(|v| (infos[j].name.clone(), v))
+                                })
+                                .collect();
                             ctx.set(op, value);
                             return OC_FORM_RESULT_NEWGROUP;
                         }
@@ -711,6 +746,7 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         probing: false,
         probed: false,
         picked: Default::default(),
+        carry: Vec::new(),
         sso_needed: false,
         last_error: None,
     }));
