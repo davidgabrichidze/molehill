@@ -40,27 +40,27 @@ impl Manager {
     }
 
     pub fn set_status(&self, status: TunnelStatus) {
-        self.inner.lock().unwrap().statuses.insert(status.id.clone(), status.clone());
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).statuses.insert(status.id.clone(), status.clone());
         self.emit(Event::Status(status));
     }
 
     pub fn show_prompt(&self, id: &str, prompt_id: u64, prompt: Prompt) {
-        self.inner.lock().unwrap().prompts.insert(id.to_string(), (prompt_id, prompt.clone()));
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).prompts.insert(id.to_string(), (prompt_id, prompt.clone()));
         self.emit(Event::Prompt { id: id.to_string(), prompt_id, prompt });
     }
 
     pub fn clear_prompt(&self, id: &str) {
-        if let Some((prompt_id, _)) = self.inner.lock().unwrap().prompts.remove(id) {
+        if let Some((prompt_id, _)) = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).prompts.remove(id) {
             self.emit(Event::PromptDone { id: id.to_string(), prompt_id });
         }
     }
 
     pub fn active_tunnels(&self) -> usize {
-        self.inner.lock().unwrap().tunnels.len()
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tunnels.len()
     }
 
     fn tunnel_finished(&self, id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         inner.tunnels.remove(id);
         inner.prompts.remove(id);
     }
@@ -75,8 +75,13 @@ impl Manager {
         }
         let (tx, rx) = mpsc::unbounded_channel();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if inner.tunnels.contains_key(&id) {
+                // Already running: tell the client where it stands, so a
+                // resent Connect doesn't wait for a status that never comes.
+                if let Some(st) = inner.statuses.get(&id).cloned() {
+                    self.emit(Event::Status(st));
+                }
                 return;
             }
             if inner.installing {
@@ -88,6 +93,8 @@ impl Manager {
         }
         let mgr = self.clone();
         tokio::spawn(async move {
+            // Runs even if the tunnel task panics, so the id is never stuck.
+            let _guard = Finished { mgr: mgr.clone(), id: id.clone(), name: name.clone() };
             match spec {
                 TunnelSpec::OpenVpn { config, username, password } => {
                     let creds = username.zip(password);
@@ -98,31 +105,30 @@ impl Manager {
                     tunnel::openconnect::run(mgr.clone(), id.clone(), name, spec, rx).await;
                 }
             }
-            mgr.tunnel_finished(&id);
         });
     }
 
     fn send(&self, id: &str, cmd: TunnelCmd) {
-        if let Some(tx) = self.inner.lock().unwrap().tunnels.get(id) {
+        if let Some(tx) = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tunnels.get(id) {
             let _ = tx.send(cmd);
         }
     }
 
     /// To every tunnel; only one waiting for the browser takes it.
     fn sso_callback(&self, url: String) {
-        for tx in self.inner.lock().unwrap().tunnels.values() {
+        for tx in self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tunnels.values() {
             let _ = tx.send(TunnelCmd::SsoCallback { url: url.clone() });
         }
     }
 
     fn disconnect_all(&self) {
-        for tx in self.inner.lock().unwrap().tunnels.values() {
+        for tx in self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tunnels.values() {
             let _ = tx.send(TunnelCmd::Disconnect);
         }
     }
 
     fn snapshot(&self) -> (Vec<TunnelStatus>, Vec<(String, u64, Prompt)>) {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let statuses = inner.statuses.values().cloned().collect();
         let prompts = inner.prompts.iter().map(|(id, (pid, p))| (id.clone(), *pid, p.clone())).collect();
         (statuses, prompts)
@@ -130,20 +136,20 @@ impl Manager {
 
     async fn components(self: &Arc<Self>, refresh: bool) -> Vec<ComponentInfo> {
         {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some((at, items)) = &inner.components
                 && !refresh && at.elapsed() < Duration::from_secs(6 * 3600) {
                     return items.clone();
                 }
         }
         let items = tokio::task::spawn_blocking(components::query).await.unwrap_or_default();
-        self.inner.lock().unwrap().components = Some((Instant::now(), items.clone()));
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).components = Some((Instant::now(), items.clone()));
         items
     }
 
     fn install(self: &Arc<Self>, component: String) {
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if inner.installing {
                 return;
             }
@@ -178,10 +184,10 @@ impl Manager {
             // Report what's installed now right away (local check, instant), so the
             // app never shows "not installed" after a successful install, then
             // refresh the latest versions online in the background.
-            let previous = mgr.inner.lock().unwrap().components.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
+            let previous = mgr.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).components.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
             let local = tokio::task::spawn_blocking(move || components::query_local(&previous)).await.unwrap_or_default();
             {
-                let mut inner = mgr.inner.lock().unwrap();
+                let mut inner = mgr.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 inner.components = Some((Instant::now(), local.clone()));
                 inner.installing = false;
             }
@@ -215,17 +221,28 @@ pub async fn run(shutdown: Arc<Notify>) -> Result<()> {
     loop {
         tokio::select! {
             res = server.connect() => {
-                res?;
-                let client = std::mem::replace(&mut server, create_pipe(false)?);
-                tokio::spawn(handle_client(client, mgr.clone()));
+                // A client that opens and drops the pipe at once (a probe,
+                // an antivirus) fails this accept; it must not end the service.
+                match res {
+                    Ok(()) => {
+                        let client = std::mem::replace(&mut server, create_pipe(false)?);
+                        tokio::spawn(handle_client(client, mgr.clone()));
+                    }
+                    Err(e) => {
+                        warn!("pipe accept failed: {e}");
+                        server = create_pipe(false)?;
+                    }
+                }
             }
             _ = shutdown.notified() => break,
         }
     }
 
+    // Long enough for openconnect's graceful stop (5 s Ctrl+C wait + 10 s
+    // kill timer) to restore routes and DNS.
     info!("shutting down, closing {} tunnel(s)", mgr.active_tunnels());
     mgr.disconnect_all();
-    for _ in 0..100 {
+    for _ in 0..250 {
         if mgr.active_tunnels() == 0 {
             break;
         }
@@ -331,5 +348,22 @@ mod tests {
         for bad in ["", r"..x", r"C:Windowsx", "a/b", "a b", "ß", &"a".repeat(65)] {
             assert!(!super::valid_id(bad), "{bad}");
         }
+    }
+}
+
+/// Removes the tunnel from the registry when its task ends, however it ends.
+struct Finished {
+    mgr: Arc<Manager>,
+    id: String,
+    name: String,
+}
+
+impl Drop for Finished {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            warn!("{}: tunnel task panicked", self.name);
+            self.mgr.set_status(status(&self.id, &self.name, TunnelState::Failed, "The tunnel stopped unexpectedly (see service.log)"));
+        }
+        self.mgr.tunnel_finished(&self.id);
     }
 }

@@ -7,6 +7,7 @@
 mod components;
 mod fortinet_sso;
 mod gp_sso;
+mod job;
 mod netstats;
 mod openconnect_auth;
 mod security;
@@ -21,7 +22,8 @@ use anyhow::{Context, Result};
 use molehill_core::{SERVICE_NAME, paths};
 use tokio::sync::Notify;
 use windows_service::service::{
-    ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode, ServiceInfo,
+    ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
+    ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo,
     ServiceStartType, ServiceState, ServiceStatus, ServiceType,
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
@@ -84,29 +86,45 @@ fn service_main(_args: Vec<OsString>) {
     }
 }
 
+fn service_status(state: ServiceState, accept: ServiceControlAccept, exit_code: ServiceExitCode) -> ServiceStatus {
+    ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: state,
+        controls_accepted: accept,
+        exit_code,
+        checkpoint: 0,
+        // Stopping waits for the engines to restore routes and DNS (up to
+        // 25 s in server::run), then for blocking work to wind down.
+        wait_hint: Duration::from_secs(40),
+        process_id: None,
+    }
+}
+
 fn run_service() -> Result<()> {
+    static HANDLE: std::sync::OnceLock<service_control_handler::ServiceStatusHandle> = std::sync::OnceLock::new();
     let shutdown = Arc::new(Notify::new());
     let notify = shutdown.clone();
     let handle = service_control_handler::register(SERVICE_NAME, move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
+            // Tell the SCM we're on it, or `sc stop` reports a failure
+            // while tunnels are still closing.
+            if let Some(h) = HANDLE.get() {
+                let _ = h.set_service_status(service_status(ServiceState::StopPending, ServiceControlAccept::empty(), ServiceExitCode::Win32(0)));
+            }
             notify.notify_one();
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
         _ => ServiceControlHandlerResult::NotImplemented,
     })?;
-    let status = |state, accept| ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS,
-        current_state: state,
-        controls_accepted: accept,
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::from_secs(10),
-        process_id: None,
-    };
-    handle.set_service_status(status(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN))?;
-    let result = runtime()?.block_on(server::run(shutdown));
-    handle.set_service_status(status(ServiceState::Stopped, ServiceControlAccept::empty()))?;
+    let _ = HANDLE.set(handle);
+    handle.set_service_status(service_status(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN, ServiceExitCode::Win32(0)))?;
+    let rt = runtime()?;
+    let result = rt.block_on(server::run(shutdown));
+    // Don't let a stuck download or installer keep the service "running".
+    rt.shutdown_timeout(Duration::from_secs(5));
+    let code = if result.is_ok() { ServiceExitCode::Win32(0) } else { ServiceExitCode::ServiceSpecific(1) };
+    handle.set_service_status(service_status(ServiceState::Stopped, ServiceControlAccept::empty(), code))?;
     result
 }
 
@@ -135,6 +153,17 @@ fn install() -> Result<()> {
         Err(_) => manager.create_service(&info, access)?,
     };
     service.set_description("Runs Molehill VPN tunnels (OpenVPN and OpenConnect) for the Molehill app.")?;
+    // Come back after a crash instead of leaving the VPN unusable until a reboot.
+    service.update_failure_actions(ServiceFailureActions {
+        reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
+        reboot_msg: None,
+        command: None,
+        actions: Some(vec![
+            ServiceAction { action_type: ServiceActionType::Restart, delay: Duration::from_secs(5) },
+            ServiceAction { action_type: ServiceActionType::Restart, delay: Duration::from_secs(30) },
+            ServiceAction { action_type: ServiceActionType::None, delay: Duration::ZERO },
+        ]),
+    })?;
     if service.query_status()?.current_state == ServiceState::Stopped {
         service.start::<&str>(&[])?;
     }

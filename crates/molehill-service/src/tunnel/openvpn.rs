@@ -75,6 +75,9 @@ struct Session {
     fatal: Option<String>,
     log_tail: Arc<Mutex<VecDeque<String>>>,
     files: Vec<PathBuf>,
+    /// The last credentials sent were a plain username/password (no OTP or
+    /// challenge in them), so a rejection means the password itself is wrong.
+    last_plain: bool,
 }
 
 pub async fn run(
@@ -105,6 +108,7 @@ pub async fn run(
         fatal: None,
         log_tail: Arc::new(Mutex::new(VecDeque::new())),
         files: Vec::new(),
+        last_plain: false,
     };
     let result = s.run(config, &mut cmds).await;
     s.clear_prompt();
@@ -145,6 +149,8 @@ impl Session {
     }
 
     fn prompt(&mut self, purpose: Purpose, prompt: Prompt) {
+        // A newer request supersedes whatever was still open.
+        self.clear_prompt();
         self.prompt_seq += 1;
         self.pending = Some((self.prompt_seq, purpose));
         self.mgr.show_prompt(&self.id, self.prompt_seq, prompt);
@@ -163,7 +169,7 @@ impl Session {
         if let Some(f) = &self.fatal {
             return f.clone();
         }
-        let tail = self.log_tail.lock().unwrap();
+        let tail = self.log_tail.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let interesting = tail.iter().rev().find(|l| {
             let l = l.to_ascii_lowercase();
             l.contains("error") || l.contains("fatal") || l.contains("cannot") || l.contains("failed")
@@ -210,19 +216,21 @@ impl Session {
             .kill_on_drop(true)
             .spawn()
             .context("starting openvpn.exe")?;
+        crate::job::adopt(&child);
         info!("{}: openvpn started (pid {:?}, management port {port})", self.name, child.id());
 
+        let mut pumps = Vec::new();
         for pipe in [child.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
                      child.stderr.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>)]
             .into_iter()
             .flatten()
         {
             let (mgr, id, tail) = (self.mgr.clone(), self.id.clone(), self.log_tail.clone());
-            tokio::spawn(async move {
+            pumps.push(tokio::spawn(async move {
                 let mut lines = BufReader::new(pipe).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     {
-                        let mut t = tail.lock().unwrap();
+                        let mut t = tail.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         if t.len() >= 40 {
                             t.pop_front();
                         }
@@ -230,7 +238,7 @@ impl Session {
                     }
                     mgr.emit(Event::Log { id: id.clone(), line });
                 }
-            });
+            }));
         }
 
         // Connect to the management interface and authenticate.
@@ -274,7 +282,13 @@ impl Session {
                     _ => mgmt_open = false,
                 },
                 cmd = cmds.recv(), if cmds_open => match cmd {
-                    Some(TunnelCmd::Answer { prompt_id, answer }) => self.answer(prompt_id, answer).await,
+                    Some(TunnelCmd::Answer { prompt_id, answer }) => {
+                        self.answer(prompt_id, answer).await;
+                        // Cancel asked openvpn to stop; don't trust it to.
+                        if self.stopping && kill_at.is_none() {
+                            kill_at = Some(Instant::now() + Duration::from_secs(8));
+                        }
+                    }
                     Some(TunnelCmd::SsoCallback { .. }) => {}
                     Some(TunnelCmd::Disconnect) | None => {
                         cmds_open = cmd.is_some();
@@ -296,6 +310,10 @@ impl Session {
             }
         };
         info!("{}: openvpn exited with {exit}", self.name);
+        // The last lines (the actual reason) may still be in the pipes.
+        for pump in pumps {
+            let _ = tokio::time::timeout(Duration::from_millis(500), pump).await;
+        }
         self.local_ip = None;
         self.since = None;
         if self.stopping { Ok(()) } else { Err(anyhow!("{}", self.failure_reason(exit.code()))) }
@@ -323,7 +341,14 @@ impl Session {
 
     fn on_state(&mut self, rest: &str) {
         let f: Vec<&str> = rest.split(',').collect();
-        let (name, desc, ip) = (f.get(1).copied().unwrap_or(""), f.get(2).copied().unwrap_or(""), f.get(3).copied().unwrap_or(""));
+        let (name, desc) = (f.get(1).copied().unwrap_or(""), f.get(2).copied().unwrap_or(""));
+        // Field 3 is the IPv4 tunnel address, field 8 the IPv6 one.
+        let ip = [f.get(3), f.get(8)].into_iter().flatten().copied().find(|s| !s.is_empty()).unwrap_or("");
+        // After Disconnect only the exit matters; late lines mustn't flip
+        // the card back to Reconnecting or raise a new prompt.
+        if self.stopping && name != "EXITING" {
+            return;
+        }
         let progress = |s: &Self| if s.state == TunnelState::Reconnecting { TunnelState::Reconnecting } else { TunnelState::Connecting };
         match name {
             "CONNECTING" | "RESOLVE" | "TCP_CONNECT" | "WAIT" => self.set(progress(self), "Reaching the server"),
@@ -356,7 +381,13 @@ impl Session {
     }
 
     async fn on_password(&mut self, rest: &str) {
+        if self.stopping {
+            return;
+        }
         if let Some(after) = rest.strip_prefix("Need 'Auth' username/password") {
+            // A fresh request (after a reconnect, say) replaces any prompt
+            // still waiting, like a stale browser sign-in.
+            self.clear_prompt();
             let static_challenge = after.find("SC:").map(|i| {
                 let sc = &after[i + 3..];
                 let (flags, text) = sc.split_once(',').unwrap_or(("0", sc));
@@ -381,12 +412,21 @@ impl Session {
                 }
             }
             self.auth_failed = true;
-            if self.saved.is_some() {
-                self.saved_rejected = true;
+            // Only a plain password rejection means the saved password is
+            // wrong; a mistyped OTP must not throw it away.
+            if self.last_plain {
+                if self.saved.is_some() {
+                    self.saved_rejected = true;
+                }
+                self.mgr.emit(Event::AuthFailed { id: self.id.clone() });
             }
-            self.mgr.emit(Event::AuthFailed { id: self.id.clone() });
         } else if rest.starts_with("Verification Failed: 'Private Key'") {
             self.mgr.emit(Event::Log { id: self.id.clone(), line: "Wrong private key passphrase".into() });
+        } else if let Some(name) = rest.strip_prefix("Need '").and_then(|r| r.split_once('\'')).map(|(n, _)| n) {
+            // HTTP Proxy, SOCKS Proxy, PKCS#11 Token … nothing answers these
+            // yet; better to fail than to sit at "Reaching the server".
+            self.fatal = Some(format!("OpenVPN asked for a {name} credential, which Molehill can't provide yet"));
+            self.send("signal SIGTERM").await;
         }
     }
 
@@ -418,6 +458,7 @@ impl Session {
             if let Some(resp) = &c.response {
                 let (user, pass) = (c.username.clone(), format!("CRV1::{}::{}", c.state_id, resp));
                 self.crv1 = None;
+                self.last_plain = false;
                 self.send_auth(&user, &pass).await;
             }
             return;
@@ -444,6 +485,7 @@ impl Session {
                 return;
             }
         let req = self.auth.take().unwrap();
+        self.last_plain = req.challenge_response.is_none();
         let (user, pass) = (req.username.unwrap(), req.password.unwrap());
         let pass = match (req.static_challenge, req.challenge_response) {
             (Some((_, _, true)), Some(r)) => format!("{pass}{r}"),
@@ -510,7 +552,9 @@ impl Session {
 fn ensure_adapter(config: &str, active_tunnels: usize) {
     use std::os::windows::process::CommandExt;
     let Some(tapctl) = components::openvpn_bin_dir().map(|d| d.join("tapctl.exe")) else { return };
-    let tap = config.lines().any(|l| l.trim_start().starts_with("dev tap"));
+    let tap = config.lines().map(str::trim_start).any(|l| {
+        l.starts_with("dev tap") || l.starts_with("dev-type tap") || l.starts_with("windows-driver tap-windows6") || l.starts_with("disable-dco")
+    });
     let hwid = if tap { r"root\tap0901" } else { "ovpn-dco" };
     let Ok(out) = std::process::Command::new(&tapctl).args(["list", "--hwid", hwid]).creation_flags(CREATE_NO_WINDOW).output() else {
         return;

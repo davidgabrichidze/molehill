@@ -136,6 +136,7 @@ impl Session {
             .kill_on_drop(true)
             .spawn()
             .context("starting the sign-in helper")?;
+        crate::job::adopt(&helper);
         let mut input = helper.stdin.take().unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
         pump(helper.stdout.take().unwrap(), tx);
@@ -155,6 +156,7 @@ impl Session {
         };
         send_line(&mut input, &serde_json::to_string(&req)?).await?;
 
+        let mut erx_open = true;
         loop {
             tokio::select! {
                 line = rx.recv() => {
@@ -188,11 +190,10 @@ impl Session {
                         }
                     }
                 }
-                line = erx.recv() => {
-                    if let Some(line) = line {
-                        self.log(line);
-                    }
-                }
+                line = erx.recv(), if erx_open => match line {
+                    Some(line) => self.log(line),
+                    None => erx_open = false,
+                },
                 cmd = cmds.recv() => match cmd {
                     Some(TunnelCmd::Answer { prompt_id, answer }) => {
                         let Some((pid, purpose)) = self.pending else { continue };
@@ -260,6 +261,7 @@ impl Session {
             .kill_on_drop(true)
             .spawn()
             .context("starting openconnect.exe")?;
+        crate::job::adopt(&child);
         info!("{}: openconnect started (pid {:?})", self.name, child.id());
         {
             let mut stdin = child.stdin.take().unwrap();
@@ -270,13 +272,15 @@ impl Session {
         pump(child.stderr.take().unwrap(), tx);
 
         let mut stopping = false;
+        let mut lines_open = true;
         let mut kill_at: Option<Instant> = None;
         let mut stats = tokio::time::interval(Duration::from_secs(2));
+        stats.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let far = || Instant::now() + Duration::from_secs(86400);
         let exit = loop {
             tokio::select! {
-                line = lines.recv() => {
-                    let Some(line) = line else { continue };
+                line = lines.recv(), if lines_open => {
+                    let Some(line) = line else { lines_open = false; continue };
                     self.on_output(&line);
                     self.log(line);
                 }

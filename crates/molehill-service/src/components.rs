@@ -8,6 +8,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use molehill_core::ipc::ComponentInfo;
@@ -77,7 +78,7 @@ struct Release {
 }
 
 fn latest_openvpn() -> Result<Release> {
-    let body = ureq::get("https://api.github.com/repos/OpenVPN/openvpn/releases?per_page=30")
+    let body = http().get("https://api.github.com/repos/OpenVPN/openvpn/releases?per_page=30")
         .header("User-Agent", &user_agent())
         .header("Accept", "application/vnd.github+json")
         .call()?
@@ -100,7 +101,7 @@ fn latest_openvpn() -> Result<Release> {
     let mut msi_url = None;
     for n in 1..=9 {
         let url = format!("https://swupdate.openvpn.org/community/releases/OpenVPN-{latest}-I{n:03}-amd64.msi");
-        match ureq::head(&url).header("User-Agent", &user_agent()).call() {
+        match http().head(&url).header("User-Agent", &user_agent()).call() {
             Ok(_) => msi_url = Some(url),
             Err(_) if msi_url.is_some() => break,
             Err(_) if n >= 3 => break,
@@ -206,7 +207,7 @@ fn install_openvpn(progress: &impl Fn(&str)) -> Result<String> {
 
 fn download(url: &str, dest: &PathBuf, progress: &impl Fn(&str)) -> Result<()> {
     progress("Downloading…");
-    let resp = ureq::get(url).header("User-Agent", &user_agent()).call()?;
+    let resp = http().get(url).header("User-Agent", &user_agent()).call()?;
     let total: Option<u64> = resp.headers().get("content-length").and_then(|v| v.to_str().ok()?.parse().ok());
     let mut reader = resp.into_body().into_reader();
     let mut out = std::fs::File::create(dest)?;
@@ -275,7 +276,7 @@ fn openconnect_version() -> Option<String> {
 
 /// Newest tagged release, e.g. "9.21".
 fn latest_openconnect() -> Result<String> {
-    let body = ureq::get(&format!("{OPENCONNECT_PROJECT}/releases?per_page=20"))
+    let body = http().get(&format!("{OPENCONNECT_PROJECT}/releases?per_page=20"))
         .header("User-Agent", &user_agent())
         .call()?
         .body_mut()
@@ -334,4 +335,16 @@ fn install_openconnect(progress: &impl Fn(&str)) -> Result<String> {
     // NSIS adds shortcuts nobody needs next to Molehill.
     let _ = std::fs::remove_file(r"C:\Users\Public\Desktop\openconnect.exe.lnk");
     Ok(format!("OpenConnect {latest} installed."))
+}
+
+/// One HTTP client for all version checks and downloads. Without timeouts a
+/// black-holed host would block the Components page, and the service's
+/// shutdown behind it.
+fn http() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(Duration::from_secs(600)))
+        .build()
+        .into()
 }
