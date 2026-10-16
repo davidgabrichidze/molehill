@@ -567,12 +567,18 @@ unsafe extern "C" fn on_progress(privdata: *mut c_void, level: c_int, fmt: *cons
 /// Cuts whatever follows `=` or `: ` in a line that mentions a secret, so a
 /// message like `cookie=abc…` becomes `cookie=…`.
 fn redact(line: &str) -> String {
-    for sep in ["=", ": "] {
-        if let Some(i) = line.find(sep) {
-            return format!("{}{sep}…", &line[..i]);
-        }
+    let lower = line.to_ascii_lowercase();
+    // Only a `key=value` shape carries a value; error text like "Failed to
+    // obtain WebVPN cookie: HTTP 403" must stay readable.
+    let cut = ["cookie", "password", "passwd", "secret", "token", "session"]
+        .iter()
+        .flat_map(|w| lower.match_indices(w).map(move |(i, _)| i + w.len()))
+        .filter(|&end| lower.as_bytes().get(end) == Some(&b'='))
+        .min();
+    match cut {
+        Some(end) => format!("{}…", &line[..=end]),
+        None => line.to_string(),
     }
-    line.to_string()
 }
 
 /// Minimal printf for progress messages: %s %d %i %u %x %c %% with optional
@@ -816,5 +822,17 @@ mod tests {
         let s = format_c(b"Connected to %s:%d (%u%%)\n", &[host.as_ptr() as usize, 443, 99]);
         assert_eq!(s, "Connected to vpn.example.com:443 (99%)\n");
         assert_eq!(format_c(b"%ld left", &[(-5i64) as usize]), "-5 left");
+    }
+}
+
+#[cfg(test)]
+mod redact_tests {
+    #[test]
+    fn keeps_errors_readable_but_cuts_values() {
+        assert_eq!(super::redact("Failed to obtain WebVPN cookie: HTTP 403"), "Failed to obtain WebVPN cookie: HTTP 403");
+        assert_eq!(super::redact("Set-Cookie: webvpn=abc; path=/"), "Set-Cookie: webvpn=abc; path=/");
+        assert_eq!(super::redact("Got cookie=abcdef"), "Got cookie=…");
+        assert_eq!(super::redact("Got session=12345 for user"), "Got session=…");
+        assert_eq!(super::redact("Session terminated by server"), "Session terminated by server");
     }
 }

@@ -67,8 +67,14 @@ pub fn readable_dir(dir: &Path) -> Result<()> {
 
 fn lock_dir(dir: &Path, users_read: bool) -> Result<()> {
     let root = molehill_core::paths::service_dir();
+    // A developer's override dir belongs to them; locking it to SYSTEM
+    // would shut them out of their own folder.
+    let dev = std::env::var_os("MOLEHILL_SERVICE_DIR").is_some();
     for (level, read) in [(root.as_path(), false), (dir, users_read)] {
         std::fs::create_dir_all(level)?;
+        if dev {
+            continue;
+        }
         let meta = std::fs::symlink_metadata(level)?;
         if !meta.is_dir() || meta.file_type().is_symlink() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             bail!("{} is not a plain directory; refusing to use it", level.display());

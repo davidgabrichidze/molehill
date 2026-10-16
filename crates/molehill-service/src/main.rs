@@ -154,6 +154,8 @@ fn install() -> Result<()> {
     };
     service.set_description("Runs Molehill VPN tunnels (OpenVPN and OpenConnect) for the Molehill app.")?;
     // Come back after a crash instead of leaving the VPN unusable until a reboot.
+    // Also for an error exit (not just a crash), or the actions below never fire.
+    service.set_failure_actions_on_non_crash_failures(true)?;
     service.update_failure_actions(ServiceFailureActions {
         reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
         reboot_msg: None,
