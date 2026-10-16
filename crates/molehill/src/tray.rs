@@ -2,6 +2,9 @@
 //! current state (docs/brand/png/logos), so one glance tells them apart.
 //! Right-click opens Molehill's own menu window (see ui/traymenu.slint)
 //! instead of a native Win32 menu.
+//!
+//! macOS: the same marks in the menu bar, with a native menu (same entries
+//! as the Windows popup) on right-click; left-click opens the window.
 
 use std::cell::RefCell;
 
@@ -10,11 +13,19 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum TrayAction {
     Show,
     /// Open the menu at this cursor position (physical pixels).
+    #[cfg_attr(not(windows), allow(dead_code))]
     Menu(i32, i32),
+    /// macOS native menu entries.
+    #[cfg(target_os = "macos")]
+    Toggle(String),
+    #[cfg(target_os = "macos")]
+    DisconnectAll,
+    #[cfg(target_os = "macos")]
+    Quit,
 }
 
 /// What the tray icon shows, one brand mark each.
@@ -108,9 +119,92 @@ fn icon(state: TrayState) -> Option<Icon> {
 pub struct Tray {
     icon: TrayIcon,
     last: RefCell<(TrayState, String)>,
+    #[cfg(target_os = "macos")]
+    last_menu: RefCell<Option<MenuModel>>,
+}
+
+/// What the macOS menu shows: summary, any tunnel on, and (id, name, state)
+/// per tunnel, state being "on", "busy", "error" or "off".
+#[cfg(target_os = "macos")]
+#[derive(Clone, PartialEq)]
+pub struct MenuModel {
+    pub summary: String,
+    pub any_on: bool,
+    pub tunnels: Vec<(String, String, String)>,
+}
+
+#[cfg(target_os = "macos")]
+fn build_menu(m: &MenuModel) -> tray_icon::menu::Menu {
+    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let menu = Menu::new();
+    let _ = menu.append(&MenuItem::new(format!("Molehill · {}", m.summary), false, None));
+    let _ = menu.append(&PredefinedMenuItem::separator());
+    for (id, name, state) in &m.tunnels {
+        let mark = match state.as_str() {
+            "on" => "●",
+            "busy" => "◐",
+            "error" => "✕",
+            _ => "○",
+        };
+        let action = if state == "on" || state == "busy" { "Disconnect" } else { "Connect" };
+        let _ = menu.append(&MenuItem::with_id(format!("t:{id}"), format!("{mark}  {name} — {action}"), true, None));
+    }
+    if !m.tunnels.is_empty() {
+        let _ = menu.append(&PredefinedMenuItem::separator());
+    }
+    let _ = menu.append(&MenuItem::with_id("open", "Open Molehill", true, None));
+    let _ = menu.append(&MenuItem::with_id("disconnect-all", "Disconnect all", m.any_on, None));
+    let _ = menu.append(&PredefinedMenuItem::separator());
+    let _ = menu.append(&MenuItem::with_id("quit", "Quit Molehill", true, None));
+    menu
 }
 
 impl Tray {
+    #[cfg(target_os = "macos")]
+    pub fn new(on_action: impl Fn(TrayAction) + Send + Sync + 'static) -> Result<Self> {
+        use std::sync::Arc;
+        use tray_icon::menu::MenuEvent;
+        let on_action = Arc::new(on_action);
+        let on_click = on_action.clone();
+        TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                on_click(TrayAction::Show);
+            }
+        }));
+        MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
+            let id = e.id().0.as_str();
+            let action = match id {
+                "open" => TrayAction::Show,
+                "disconnect-all" => TrayAction::DisconnectAll,
+                "quit" => TrayAction::Quit,
+                _ => match id.strip_prefix("t:") {
+                    Some(t) => TrayAction::Toggle(t.to_string()),
+                    None => return,
+                },
+            };
+            on_action(action);
+        }));
+        let model = MenuModel { summary: String::new(), any_on: false, tunnels: Vec::new() };
+        let icon = TrayIconBuilder::new()
+            .with_tooltip("Molehill")
+            .with_icon(icon(TrayState::Idle).expect("tray icon"))
+            .with_menu(Box::new(build_menu(&model)))
+            .with_menu_on_left_click(false)
+            .build()?;
+        Ok(Self { icon, last: RefCell::new((TrayState::Idle, "Molehill".into())), last_menu: RefCell::new(Some(model)) })
+    }
+
+    /// Rebuilds the macOS menu when what it shows changed.
+    #[cfg(target_os = "macos")]
+    pub fn set_menu(&self, model: MenuModel) {
+        let mut last = self.last_menu.borrow_mut();
+        if last.as_ref() != Some(&model) {
+            self.icon.set_menu(Some(Box::new(build_menu(&model))));
+            *last = Some(model);
+        }
+    }
+
+    #[cfg(windows)]
     pub fn new(on_action: impl Fn(TrayAction) + Send + Sync + 'static) -> Result<Self> {
         TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
             if let TrayIconEvent::Click { button, button_state: MouseButtonState::Up, position, .. } = e {
@@ -131,7 +225,12 @@ impl Tray {
     pub fn update(&self, state: TrayState, tooltip: &str) {
         let mut last = self.last.borrow_mut();
         if last.0 != state {
+            #[cfg(windows)]
             let _ = self.icon.set_icon(icon(state));
+            // The "service not running" mark is monochrome: let macOS draw it
+            // in the menu bar's own colour, light or dark.
+            #[cfg(target_os = "macos")]
+            let _ = if state == TrayState::Offline { self.icon.set_icon_templated(icon(state)) } else { self.icon.set_icon(icon(state)) };
         }
         if last.1 != tooltip {
             let _ = self.icon.set_tooltip(Some(tooltip));

@@ -138,6 +138,11 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     selfupdate::set_app_id();
+    #[cfg(target_os = "macos")]
+    {
+        platform::select_backend();
+        platform::install_event_handlers();
+    }
     // COM on the UI thread, for the taskbar badge (ITaskbarList3).
     #[cfg(windows)]
     let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
@@ -186,13 +191,30 @@ fn main() -> anyhow::Result<()> {
     app.apply_theme();
     app.refresh_subtitles();
 
+    #[cfg(windows)]
     match Tray::new(|action| on_ui(move |app| app.on_tray(action))) {
         Ok(t) => *app.tray.borrow_mut() = Some(t),
         Err(e) => eprintln!("tray icon unavailable: {e:#}"),
     }
+    // AppKit's status bar exists once the event loop runs.
+    #[cfg(target_os = "macos")]
+    on_ui(|app| {
+        match Tray::new(|action| on_ui(move |app| app.on_tray(action))) {
+            Ok(t) => *app.tray.borrow_mut() = Some(t),
+            Err(e) => eprintln!("menu bar icon unavailable: {e:#}"),
+        }
+        app.refresh();
+    });
 
     // Closing the window keeps tunnels up and Molehill in the tray.
+    #[cfg(windows)]
     app.ui.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    // …and on macOS takes the Dock icon away with it.
+    #[cfg(target_os = "macos")]
+    app.ui.window().on_close_requested(|| {
+        platform::window_hidden();
+        slint::CloseRequestResponse::HideWindow
+    });
 
     // Ticks connected-time counters, and re-checks component versions twice a day.
     let ticker = slint::Timer::default();
@@ -334,8 +356,18 @@ impl App {
 
     fn show(&self) {
         let _ = self.ui.show();
+        #[cfg(target_os = "macos")]
+        platform::window_shown();
         // The native window only exists once the event loop has processed the show.
         platform::when_ready(self.ui.as_weak(), platform::MAIN_TITLE, 25, platform::style_main);
+    }
+
+    /// A URL macOS opened with Molehill (its Info.plist schemes).
+    #[cfg(target_os = "macos")]
+    fn url_opened(&self, url: String) {
+        if url.starts_with(gpcallback::SCHEME) {
+            self.client.send(Request::SsoCallback { url });
+        }
     }
 
     fn on_tray(&self, action: TrayAction) {
@@ -345,6 +377,14 @@ impl App {
                 self.show();
             }
             TrayAction::Menu(x, y) => self.show_menu(x, y),
+            #[cfg(target_os = "macos")]
+            TrayAction::Toggle(id) => self.toggle(&id),
+            #[cfg(target_os = "macos")]
+            TrayAction::DisconnectAll => self.disconnect_all(),
+            #[cfg(target_os = "macos")]
+            TrayAction::Quit => {
+                let _ = slint::quit_event_loop();
+            }
         }
     }
 
@@ -1591,6 +1631,12 @@ impl App {
         self.menu.set_mark_tint(tint);
         if let Some(tray) = self.tray.borrow().as_ref() {
             tray.update(mark, &format!("Molehill · {summary}"));
+            #[cfg(target_os = "macos")]
+            tray.set_menu(tray::MenuModel {
+                summary: summary.to_string(),
+                any_on: !connected.is_empty(),
+                tunnels: self.connections.iter().map(|c| (c.id.to_string(), c.name.to_string(), c.state.to_string())).collect(),
+            });
         }
         self.menu.set_summary(summary.into());
         self.menu.set_any_on(!connected.is_empty());
