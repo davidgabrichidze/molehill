@@ -1,0 +1,56 @@
+# Builds the macOS packages without publishing anything, for testing: on
+# pull requests that touch the packaging, and by hand. The .pkg files are
+# the run's artifacts.
+name: macOS package
+
+on:
+  pull_request:
+    paths:
+      - "packaging/macos/**"
+      - ".github/workflows/macos-package.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Release build
+        run: cargo build --release --workspace --locked --target ${{ matrix.target }}
+
+      - name: Engines
+        run: packaging/macos/bundle-engines.sh dist/engines
+
+      - name: Package
+        run: |
+          packaging/macos/make-app.sh ${{ matrix.target }} dist
+          packaging/macos/build-pkg.sh ${{ matrix.target }} dist/engines dist
+          pkgutil --payload-files dist/Molehill-*-${{ matrix.arch }}.pkg | head -n 40
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Molehill-${{ matrix.arch }}
+          path: |
+            dist/Molehill-*.pkg
+            dist/Molehill-*.pkg.sha256
