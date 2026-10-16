@@ -481,7 +481,7 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
     }
     emit(&HelperEvent::Log {
         line: format!(
-            "Server form \"{}\" ({} {}): {} visible field(s) [{}], all fields [{}]{}{}",
+            "Server form \"{}\" ({} {}): {} visible field(s) [{}], all fields [{}]{}{}{}",
             auth_id,
             cstr(form.method).unwrap_or_default(),
             cstr(form.action).unwrap_or_default(),
@@ -489,6 +489,7 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
             infos.iter().map(|f| format!("{}:{:?}", f.name, f.kind)).collect::<Vec<_>>().join(", "),
             all.join(", "),
             cstr(form.message).map(|m| format!(", message: {m}")).unwrap_or_default(),
+            error.as_deref().map(|e| format!(", error: {e}")).unwrap_or_default(),
             if plan.auto_submit { ", filled in automatically" } else { ", asking you" }
         ),
     });
