@@ -138,6 +138,8 @@ export component AppWindow inherits Window {
     callback browse-tls-key();
     callback save-profile();
     callback delete-profile();
+    // The client certificate choice changed (macOS: its last entry picks a file).
+    callback form-cert-picked(int);
     callback cancel-editor();
 
     // ── components ──────────────────────────────────────────────────
@@ -537,6 +539,7 @@ export component AppWindow inherits Window {
                         Select {
                             model: root.form-cert-options;
                             current-index <=> root.form-cert-index;
+                            selected(_) => { root.form-cert-picked(self.current-index); }
                         }
                         Hint { text: "Only if the server asks for one, along with your password."; }
                     }

@@ -101,6 +101,8 @@ struct Api {
     set_client_cert: unsafe extern "C" fn(Vpn, *const c_char, *const c_char) -> c_int,
     set_option_value: unsafe extern "C" fn(*mut OcFormOpt, *const c_char) -> c_int,
     set_external_browser_callback: Option<unsafe extern "C" fn(Vpn, Option<BrowserCb>) -> c_int>,
+    /// The passphrase of a certificate file, when one is saved.
+    set_key_password: Option<unsafe extern "C" fn(Vpn, *const c_char) -> c_int>,
     /// The bundled GnuTLS was built with Homebrew's CA file compiled in,
     /// which a Mac without Homebrew doesn't have; trust comes from the
     /// `.pkg`'s copy of the system roots instead.
@@ -147,6 +149,7 @@ impl Api {
             set_client_cert: sym!("openconnect_set_client_cert"),
             set_option_value: sym!("openconnect_set_option_value"),
             set_external_browser_callback: unsafe { lib.get(b"openconnect_set_external_browser_callback\0") }.ok().map(|s| *s),
+            set_key_password: unsafe { lib.get(b"openconnect_set_key_password\0") }.ok().map(|s| *s),
             #[cfg(target_os = "macos")]
             set_system_trust: unsafe { lib.get(b"openconnect_set_system_trust\0") }.ok().map(|s| *s),
             #[cfg(target_os = "macos")]
@@ -276,6 +279,12 @@ pub struct FillPlan {
 /// without asking. The saved password goes into one password field, once;
 /// anything else (OTP, second password, a challenge, a message-only or
 /// select-only form) is shown to the user.
+/// The forms GnuTLS shows for a certificate file's passphrase
+/// (`request_passphrase` in openconnect's gnutls.c).
+pub fn is_cert_passphrase_form(auth_id: &str) -> bool {
+    matches!(auth_id, "openconnect_pkcs12" | "openconnect_secondary_pkcs12" | "openconnect_pem" | "openconnect_secondary_pem")
+}
+
 pub fn plan_form(
     fields: &[FieldInfo],
     has_error: bool,
@@ -435,11 +444,14 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
         emit(&HelperEvent::PasswordRejected);
     }
 
+    // A certificate file's passphrase is the user's to type (or comes from
+    // `cert_password`, set up front); never the saved login password.
+    let cert_form = is_cert_passphrase_form(&auth_id);
     let plan = plan_form(
         &infos,
         error.is_some() && !retry,
-        ctx.req.username.as_deref(),
-        ctx.req.password.as_deref(),
+        ctx.req.username.as_deref().filter(|_| !cert_form),
+        ctx.req.password.as_deref().filter(|_| !cert_form),
         ctx.password_field.is_some() && !retry,
         ctx.auto_submits,
     );
@@ -796,6 +808,11 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
             if unsafe { (c.api.set_client_cert)(vpn, cert_c.as_ptr(), key_c.as_ptr()) } != 0 {
                 bail!("The client certificate couldn't be loaded");
             }
+            // A wrong one makes GnuTLS ask through the form callback.
+            if let (Some(pass), Some(set_pass)) = (c.req.cert_password.as_deref(), c.api.set_key_password) {
+                let pass_c = cstring(pass);
+                unsafe { set_pass(vpn, pass_c.as_ptr()) };
+            }
         }
         if let Some(set_browser) = c.api.set_external_browser_callback {
             unsafe { set_browser(vpn, Some(on_browser)) };
@@ -861,6 +878,15 @@ mod tests {
 
     fn plan(fields: &[FieldInfo], error: bool, password_used: bool) -> FillPlan {
         plan_form(fields, error, Some("shota"), Some("s3cret"), password_used, 0)
+    }
+
+    /// The passphrase form gets nothing from the saved login; it is asked.
+    #[test]
+    fn certificate_passphrase_is_never_the_login_password() {
+        assert!(is_cert_passphrase_form("openconnect_pkcs12") && !is_cert_passphrase_form("main"));
+        let fields = [f("openconnect_pkcs12", FieldKind::Password)];
+        let p = plan_form(&fields, false, None, None, false, 0);
+        assert!(p.fills.is_empty() && !p.auto_submit && p.password_field.is_none());
     }
 
     #[test]

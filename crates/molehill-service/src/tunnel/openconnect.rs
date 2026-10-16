@@ -164,6 +164,7 @@ impl Session {
             saml_login: false,
             cert: None,
             key: None,
+            cert_password: None,
         };
         send_line(&mut input, &serde_json::to_string(&req)?).await?;
 

@@ -34,6 +34,10 @@ pub struct AuthRequest {
     pub cert: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
+    /// The passphrase of a certificate file (`.p12`), when one is saved.
+    /// Older callers don't send it.
+    #[serde(default)]
+    pub cert_password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,4 +75,23 @@ pub enum HelperAnswer {
 /// The private key URL that goes with a `system:win:…;type=cert` URL.
 pub fn key_for_cert(cert: &str) -> String {
     cert.replace("type=cert", "type=privkey")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request from an app that predates `cert_password` still parses.
+    #[test]
+    fn old_requests_still_parse() {
+        let json = r#"{"dir":"C:\\OC","protocol":"anyconnect","server":"vpn.example.com","username":"u","password":"p","group":null,"pin":null,"cert":"system:win:id=1;type=cert","key":null}"#;
+        let req: AuthRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.cert_password, None);
+        assert_eq!(req.cert.as_deref(), Some("system:win:id=1;type=cert"));
+    }
+
+    #[test]
+    fn a_file_is_its_own_key() {
+        assert_eq!(key_for_cert("/Users/a/Library/Application Support/Molehill/certs/x.p12"), "/Users/a/Library/Application Support/Molehill/certs/x.p12");
+    }
 }

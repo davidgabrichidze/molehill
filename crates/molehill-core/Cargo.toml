@@ -17,3 +17,6 @@ ureq = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"

@@ -85,6 +85,7 @@ pub fn sso(base: &str, pin: &str, req: &AuthRequest, mut answer: impl FnMut() ->
         group: req.group.clone(),
         cert: req.cert.clone(),
         key: req.key.clone(),
+        cert_password: req.cert_password.clone(),
     })
 }
 
