@@ -7,8 +7,11 @@
 #define AppExe "molehill.exe"
 #define ServiceExe "molehill-service.exe"
 #define Bin "..\target\release"
-; From the binary's version resource, so it can't drift from Cargo.toml.
-#define AppVersion GetVersionNumbersString(Bin + "\" + AppExe)
+; The release workflow passes /DAppVersion=<tag version>; a local build falls
+; back to the binary's version resource, so neither can drift from Cargo.toml.
+#ifndef AppVersion
+  #define AppVersion GetVersionNumbersString(Bin + "\" + AppExe)
+#endif
 
 [Setup]
 AppId={{6F3C2B1E-8D4A-4E59-9C1B-4D2E7A9F0B3C}
@@ -41,7 +44,8 @@ Source: "{#Bin}\{#ServiceExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
+; The id lets Windows show Molehill's notifications (update available) as Molehill's.
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "Giorgobiani.Molehill"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
@@ -50,6 +54,9 @@ Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: s
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Open Molehill"; Flags: nowait postinstall skipifsilent
+; An update started from the app (/UPDATE) runs silently; start Molehill again
+; afterwards, as the signed-in user rather than as the elevated installer.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: IsAppUpdate
 
 [UninstallRun]
 Filename: "{app}\{#ServiceExe}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
@@ -60,6 +67,16 @@ Filename: "{app}\{#ServiceExe}"; Parameters: "uninstall"; Flags: runhidden waitu
 Type: filesandordirs; Name: "{commonappdata}\Molehill"
 
 [Code]
+function IsAppUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/UPDATE') = 0 then
+      Result := True;
+end;
+
 // Stop the service so its binary can be replaced on upgrade, and close the
 // app (it answers WM_ENDSESSION, which the Restart Manager sends).
 function PrepareToInstall(var NeedsRestart: Boolean): String;

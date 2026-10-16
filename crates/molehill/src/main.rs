@@ -2,6 +2,7 @@
 
 mod client;
 mod gpcallback;
+mod selfupdate;
 mod logo;
 mod platform;
 mod tray;
@@ -58,6 +59,12 @@ struct State {
     opened_urls: HashSet<(String, u64)>,
     /// GlobalProtect tunnels waiting for the browser (see gpcallback).
     gp_signins: HashSet<String>,
+    /// A newer Molehill on GitHub, and what its update is doing.
+    app_update: Option<molehill_core::update::Release>,
+    app_update_status: String,
+    app_update_busy: bool,
+    /// Version already announced with a notification this session.
+    app_update_notified: Option<String>,
 }
 
 struct App {
@@ -99,6 +106,7 @@ fn main() -> anyhow::Result<()> {
     if !platform::claim_single_instance() {
         return Ok(());
     }
+    selfupdate::set_app_id();
     // A crash during a GlobalProtect sign-in leaves the handler registered.
     gpcallback::unregister();
     let start_hidden = std::env::args().any(|a| a == "--hidden");
@@ -154,8 +162,13 @@ fn main() -> anyhow::Result<()> {
     ticker.start(slint::TimerMode::Repeated, Duration::from_secs(1), || with_app(|app| app.refresh()));
     let updates = slint::Timer::default();
     updates.start(slint::TimerMode::Repeated, Duration::from_secs(12 * 3600), || {
-        with_app(|app| app.client.send(Request::QueryComponents { refresh: true }))
+        with_app(|app| {
+            app.client.send(Request::QueryComponents { refresh: true });
+            app.check_app_update();
+        })
     });
+    // Molehill's own update: shortly after start, then with the timer above.
+    slint::Timer::single_shot(Duration::from_secs(5), || with_app(|app| app.check_app_update()));
 
     app.refresh();
     if !start_hidden {
@@ -167,6 +180,62 @@ fn main() -> anyhow::Result<()> {
 }
 
 impl App {
+    // ── Molehill's own updates ──────────────────────────────────────
+
+    fn check_app_update(&self) {
+        selfupdate::check(|result| on_ui(move |app| app.on_app_update_checked(result)));
+    }
+
+    fn on_app_update_checked(&self, result: Result<Option<molehill_core::update::Release>, String>) {
+        let mut st = self.state.borrow_mut();
+        // Offline or rate-limited: try again with the next check, quietly.
+        let Ok(found) = result else { return };
+        if let Some(r) = &found
+            && st.app_update_notified.as_deref() != Some(r.version.as_str())
+        {
+            st.app_update_notified = Some(r.version.clone());
+            selfupdate::notify(r);
+        }
+        if !st.app_update_busy {
+            st.app_update = found;
+        }
+        drop(st);
+        self.refresh();
+    }
+
+    fn update_app(&self) {
+        let mut st = self.state.borrow_mut();
+        let Some(release) = st.app_update.clone() else { return };
+        if st.app_update_busy {
+            return;
+        }
+        st.app_update_busy = true;
+        st.app_update_status = "Downloading…".into();
+        drop(st);
+        self.refresh();
+        selfupdate::install(release, |p| {
+            on_ui(move |app| {
+                let mut st = app.state.borrow_mut();
+                match p {
+                    selfupdate::Progress::Downloading(n) => st.app_update_status = format!("Downloading… {n}%"),
+                    selfupdate::Progress::Failed(e) => {
+                        st.app_update_busy = false;
+                        st.app_update_status = e;
+                    }
+                    selfupdate::Progress::Launched => {
+                        // The installer replaces our files and starts us again.
+                        st.app_update_status = "Installing…".into();
+                        drop(st);
+                        let _ = slint::quit_event_loop();
+                        return;
+                    }
+                }
+                drop(st);
+                app.refresh();
+            })
+        });
+    }
+
     fn show(&self) {
         let _ = self.ui.show();
         // The native window only exists once the event loop has processed the show.
@@ -251,6 +320,8 @@ impl App {
                 s.refresh();
             }
         });
+        let a = app.clone();
+        ui.on_update_app(move || a().map(|s| s.update_app()).unwrap_or_default());
         let a = app.clone();
         ui.on_install_component(move |id| {
             if let Some(s) = a() {
@@ -1076,6 +1147,9 @@ impl App {
             (String::new(), false)
         };
         ui.set_notice(notice.into());
+        ui.set_app_update(st.app_update.as_ref().map(|r| r.version.clone()).unwrap_or_default().into());
+        ui.set_app_update_busy(st.app_update_busy);
+        ui.set_app_update_status(st.app_update_status.clone().into());
         ui.set_components_attention(attention);
 
         let comps: Vec<ComponentItem> = st

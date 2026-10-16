@@ -130,8 +130,7 @@ pub fn import(path: &Path) -> Result<String> {
     };
     rewrite(&text, |name, args| {
         let first = args.first();
-        if INLINE_TEXT.contains(&name) && first.is_some() && !is_inline_arg(first) {
-            let arg = first.unwrap();
+        if let Some(arg) = first.filter(|_| INLINE_TEXT.contains(&name) && !is_inline_arg(first)) {
             if name == "dh" && arg == "none" {
                 return Ok(None);
             }
@@ -148,8 +147,8 @@ pub fn import(path: &Path) -> Result<String> {
                 }
             return Ok(Some(s));
         }
-        if name == "pkcs12" && first.is_some() && !is_inline_arg(first) {
-            let file = resolve(first.unwrap());
+        if let Some(arg) = first.filter(|_| name == "pkcs12" && !is_inline_arg(first)) {
+            let file = resolve(arg);
             let bytes = std::fs::read(&file).with_context(|| format!("pkcs12: cannot read {}", file.display()))?;
             let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
             return Ok(Some(format!("<pkcs12>\n{b64}\n</pkcs12>")));

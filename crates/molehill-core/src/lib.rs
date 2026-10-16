@@ -6,6 +6,7 @@ pub mod paths;
 pub mod profile;
 pub mod secrets;
 pub mod setup;
+pub mod update;
 pub mod version;
 
 pub const APP_NAME: &str = "Molehill";

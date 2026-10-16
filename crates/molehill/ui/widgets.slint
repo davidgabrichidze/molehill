@@ -278,10 +278,10 @@ export component TextArea inherits Rectangle {
             selection-background-color: Theme.accent.transparentize(0.55);
             selection-foreground-color: Theme.text;
             cursor-position-changed(p) => {
-                if p.y + f.viewport-y < 0px {
-                    f.viewport-y = - p.y;
-                } else if p.y + f.viewport-y > f.height - root.font-size * 1.6 {
-                    f.viewport-y = f.height - root.font-size * 1.6 - p.y;
+                if p.y + f.content-y < 0px {
+                    f.content-y = - p.y;
+                } else if p.y + f.content-y > f.height - root.font-size * 1.6 {
+                    f.content-y = f.height - root.font-size * 1.6 - p.y;
                 }
             }
         }
@@ -290,7 +290,7 @@ export component TextArea inherits Rectangle {
         x: parent.width - 3px;
         width: 2px;
         height: max(16px, f.height * f.height / f.content-height);
-        y: 1px + (- f.viewport-y) * (parent.height - 2px - self.height) / max(1px, f.content-height - f.height);
+        y: 1px + (- f.content-y) * (parent.height - 2px - self.height) / max(1px, f.content-height - f.height);
         background: Theme.faint;
     }
 }
@@ -435,7 +435,7 @@ export component Scroll inherits Rectangle {
         x: parent.width - 2px;
         width: 2px;
         height: max(20px, f.height * f.height / f.content-height);
-        y: (- f.viewport-y) * (parent.height - self.height) / max(1px, f.content-height - f.height);
+        y: (- f.content-y) * (parent.height - self.height) / max(1px, f.content-height - f.height);
         background: Theme.faint;
     }
 }

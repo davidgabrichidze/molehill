@@ -89,6 +89,11 @@ export component AppWindow inherits Window {
     callback submit-form(string, int);
     callback new-connection();
     callback open-components();
+    // A newer Molehill ("" when up to date).
+    in property <string> app-update;
+    in property <bool> app-update-busy;
+    in property <string> app-update-status;
+    callback update-app();
 
     // ── editor ──────────────────────────────────────────────────────
     in-out property <bool> form-is-new: true;
@@ -179,6 +184,41 @@ export component AppWindow inherits Window {
                         busy: root.any-busy;
                         enabled: root.connections.length > 0;
                         toggled => { root.master-toggle(); }
+                    }
+                }
+            }
+
+            if root.app-update != "": Rectangle {
+                background: Theme.accent.transparentize(0.9);
+                border-width: 1px;
+                border-color: Theme.accent.transparentize(0.4);
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: "Molehill " + root.app-update + " is available";
+                            color: Theme.accent;
+                            font-size: 11px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.app-update-status != "" ? root.app-update-status : "Your VPNs reconnect after a short break.";
+                            color: Theme.muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            text: root.app-update-busy ? "Updating…" : "Update";
+                            kind: "primary";
+                            enabled: !root.app-update-busy;
+                            clicked => { root.update-app(); }
+                        }
                     }
                 }
             }

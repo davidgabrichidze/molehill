@@ -1,0 +1,69 @@
+# Pushing a version tag (v0.2.0) publishes a GitHub Release with the
+# installer and its SHA-256. The app's self-update looks for exactly these
+# two files on the latest release:
+#   molehill-setup-<version>.exe
+#   molehill-setup-<version>.exe.sha256
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match the Cargo version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $cargo = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object name -eq 'molehill' | Select-Object -ExpandProperty version
+          if ($tag -ne $cargo) { throw "Tag v$tag doesn't match the workspace version $cargo in Cargo.toml" }
+          "version=$tag" >> $env:GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Release build
+        run: cargo build --release --workspace --locked
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" installer\molehill.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          $exe = "installer\Output\molehill-setup-${{ steps.version.outputs.version }}.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  molehill-setup-${{ steps.version.outputs.version }}.exe" | Set-Content -NoNewline -Encoding ascii "$exe.sha256"
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          gh release create "${{ github.ref_name }}" `
+            "installer\Output\molehill-setup-$v.exe" `
+            "installer\Output\molehill-setup-$v.exe.sha256" `
+            --title "Molehill $v" `
+            --generate-notes `
+            --verify-tag

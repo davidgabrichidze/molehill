@@ -85,10 +85,9 @@ fn rasterize(size: u32, f: impl Fn(f32, f32) -> Option<[u8; 3]>) -> Vec<u8> {
                     }
                 }
             }
-            if a == 0 {
-                out.extend_from_slice(&[0, 0, 0, 0]);
-            } else {
-                out.extend_from_slice(&[(r / a) as u8, (g / a) as u8, (b / a) as u8, (a * 255 / (SS * SS)) as u8]);
+            match (r.checked_div(a), g.checked_div(a), b.checked_div(a)) {
+                (Some(r), Some(g), Some(b)) => out.extend_from_slice(&[r as u8, g as u8, b as u8, (a * 255 / (SS * SS)) as u8]),
+                _ => out.extend_from_slice(&[0, 0, 0, 0]),
             }
         }
     }

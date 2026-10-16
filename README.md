@@ -49,6 +49,9 @@ flat and square, nothing in the way.
 - **Untrusted certificates, handled.** If Windows doesn't trust the server's
   certificate, Molehill shows its fingerprint and asks once; after that the
   connection is pinned to exactly that certificate.
+- **Keeps itself up to date.** When a new Molehill is released, you get a
+  Windows notification and an **Update** button; the installer is downloaded,
+  checked against its published SHA-256 and run for you.
 - **No prerequisites to hunt for.** OpenVPN and OpenConnect are downloaded,
   verified and installed by Molehill. It checks for new versions twice a day
   and offers the update in the app.
@@ -194,7 +197,7 @@ docs/brand/           logo, icons and artwork (SVG sources, PNG exports, palette
    through the VPN, internet and DNS on your own connection
 6. **WireGuard**
 7. GlobalProtect HIP reports; per-user tunnels on shared machines
-8. Self-update, signed releases, a winget manifest
+8. Code-signed releases and a winget manifest
 
 ## Brand
 
@@ -203,6 +206,11 @@ icons and the artwork live in [`docs/brand`](docs/brand) as SVG sources with
 PNG exports and the palette. The app draws the same mark in code for its
 window, tray and installer icons; the tray version changes colour with the
 VPN state.
+
+## Contributing
+
+Pull requests into `main`, CI green, squash merge; releases are version tags.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
