@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- build-pkg.sh fills in @VERSION@ and @ARCH@. -->
+<installer-gui-script minSpecVersion="2">
+    <title>Molehill</title>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="@ARCH@"/>
+    <allowed-os-versions>
+        <os-version min="15.0"/>
+    </allowed-os-versions>
+    <domains enable_localSystem="true"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="molehill"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="molehill" visible="false">
+        <pkg-ref id="io.github.giorgobiani.molehill"/>
+    </choice>
+    <pkg-ref id="io.github.giorgobiani.molehill" version="@VERSION@" onConclusion="none">molehill-component.pkg</pkg-ref>
+</installer-gui-script>

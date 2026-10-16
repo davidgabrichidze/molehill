@@ -23,7 +23,7 @@ sed "s/@VERSION@/$version/g" "$root/packaging/macos/Info.plist" > "$app/Contents
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 iconset=$(mktemp -d)/Molehill.iconset
-(cd "$root" && cargo run --quiet --release -p molehill --example appicon -- "$iconset" >/dev/null)
+(cd "$root" && cargo run --quiet --release --target "$target" -p molehill --example appicon -- "$iconset" >/dev/null)
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/Molehill.icns"
 
 # Ad hoc: no Developer ID, so Gatekeeper asks once ("Open Anyway").

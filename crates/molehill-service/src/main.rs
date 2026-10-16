@@ -88,6 +88,12 @@ fn main() -> Result<()> {
         // openconnect's --script (see vpnc_macos.rs).
         #[cfg(target_os = "macos")]
         Some("vpnc-hook") => vpnc::run(std::env::args().nth(2)),
+        // Run by uninstall.sh: remove DNS settings and routes a crash left.
+        #[cfg(target_os = "macos")]
+        Some("sweep") => {
+            sweep::run(&paths::service_dir().join("state"));
+            Ok(())
+        }
         #[cfg(windows)]
         Some("oc-stop") => {
             let pid = std::env::args().nth(2).and_then(|p| p.parse().ok()).context("oc-stop needs a pid")?;

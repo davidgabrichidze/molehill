@@ -12,13 +12,13 @@
   <a href="https://github.com/giorgobiani/molehill/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/giorgobiani/molehill/release.yml?style=flat-square&labelColor=1a1b26&label=release%20build" alt="Release build"></a>
   <a href="https://github.com/giorgobiani/molehill/releases"><img src="https://img.shields.io/github/downloads/giorgobiani/molehill/total?style=flat-square&color=9ece6a&labelColor=1a1b26" alt="Downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/giorgobiani/molehill?style=flat-square&color=bb9af7&labelColor=1a1b26" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-7dcfff?style=flat-square&labelColor=1a1b26" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20macOS%2015%2B-7dcfff?style=flat-square&labelColor=1a1b26" alt="Windows 10 and 11, macOS 15 and later">
   <img src="https://img.shields.io/badge/rust-2024%20edition-e0af68?style=flat-square&labelColor=1a1b26&logo=rust" alt="Rust 2024">
 </p>
 
 <p align="center">
   <b><a href="https://giorgobiani.github.io/molehill/">giorgobiani.github.io/molehill</a></b><br><br>
-  <b>One Windows VPN client for OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.</b><br>
+  <b>One VPN client for Windows and macOS: OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.</b><br>
   Several tunnels at once, inline sign-in prompts, saved passwords, browser SSO,<br>
   and the engines it needs installed and kept up to date for you.
 </p>
@@ -99,6 +99,27 @@ WireGuard, shown in the artwork, is planned.
 
 Requires Windows 10 or 11, 64-bit.
 
+### macOS
+
+1. Download `Molehill-arm64.pkg` (Apple Silicon) or `Molehill-x86_64.pkg`
+   (Intel) from [Releases](https://github.com/giorgobiani/molehill/releases).
+2. Open it. Molehill isn't signed with a paid Apple Developer ID, so macOS
+   blocks it the first time: open **System Settings → Privacy & Security**,
+   click **Open Anyway** next to the Molehill message, and confirm with your
+   password. Updates don't ask again.
+3. The package installs the app, the Molehill service and the OpenVPN and
+   OpenConnect engines. Molehill starts in the menu bar.
+
+Requires macOS 15 Sequoia or later. Two prompts to expect:
+- After each update, macOS asks once per saved password whether Molehill may
+  use it from the Keychain (**Always Allow**). It happens because each update
+  carries a new ad-hoc signature.
+- Signing in to a server on your local network can bring up the Local Network
+  prompt; allow it.
+
+To remove Molehill: `sudo /opt/molehill/uninstall.sh` (your profiles in
+`~/Library/Application Support/Molehill` and the Keychain items stay).
+
 ## How it works
 
 ```
@@ -125,6 +146,16 @@ Requires Windows 10 or 11, 64-bit.
     tunnel with the session cookie, pinned to the certificate that was checked.
 - **IPC** is the pipe `\\.\pipe\molehill`, local only, open to SYSTEM,
   Administrators and interactive users.
+
+On **macOS** the same pieces run as `Molehill.app` (menu bar, Keychain,
+profiles in `~/Library/Application Support/Molehill`) and a root launchd
+daemon (`/opt/molehill/bin/molehill-service`) listening on the Unix socket
+`/var/run/molehill.sock` (`root:staff`, mode 0660). The engines ship inside
+the package in `/opt/molehill/engines`. DNS goes through `scutil`, one set of
+keys per tunnel, by Molehill's own hooks: `dns-up`/`dns-down` for OpenVPN
+and `vpnc-hook` for OpenConnect, in place of the stock vpnc-script. Client
+certificates are `.p12`/`.pfx` files there; OpenConnect can't read the
+macOS Keychain.
 
 ### Security model
 
@@ -155,6 +186,15 @@ with full privileges.
 7. Secrets are kept out of logs: cookies, tokens and passwords are dropped or
    redacted from engine output.
 
+On macOS the daemon runs as root and OpenVPN needs `--script-security 2` for
+DNS, so the hooks are Molehill's own binary, never a script from a profile.
+They read only the variables they expect, accept only addresses, prefix
+lengths and plain domain names, and run `scutil`, `route` and `ifconfig` by
+absolute path with an empty environment. Profiles are also refused for
+`dns-updown` and `client-crresponse` (script hooks) and TAP devices.
+launchd ends the engines with the daemon, and at start the daemon removes
+DNS settings and routes a crash left behind.
+
 Known limits: on a PC shared by several people at once, one user can see and
 disconnect another's tunnels (Molehill is meant for single-user machines).
 GlobalProtect HIP reports are not sent yet; many gateways work without them.
@@ -168,6 +208,16 @@ Requirements: Rust (stable, 2024 edition) and the Visual Studio Build Tools
 cargo build --release
 # installer (needs Inno Setup 6.3+: winget install JRSoftware.InnoSetup)
 iscc installer\molehill.iss
+```
+
+On macOS: Rust and the Xcode Command Line Tools; the package also needs
+Homebrew (for the engines).
+
+```sh
+cargo build --release --target aarch64-apple-darwin   # or x86_64-apple-darwin
+packaging/macos/bundle-engines.sh dist/engines
+packaging/macos/make-app.sh aarch64-apple-darwin dist
+packaging/macos/build-pkg.sh aarch64-apple-darwin dist/engines dist
 ```
 
 ### Development loop
@@ -237,6 +287,8 @@ docs/brand/           logo, icons and artwork (SVG sources, PNG exports, palette
 6. **WireGuard**
 7. GlobalProtect HIP reports; per-user tunnels on shared machines
 8. Code-signed releases and a winget manifest
+9. ✅ **macOS** (Apple Silicon and Intel): menu bar, Keychain, the same four
+   VPNs and sign-ins, `.pkg` with the engines, self-update
 
 ## Brand
 

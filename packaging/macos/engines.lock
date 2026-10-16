@@ -1,0 +1,2 @@
+# The engines bundle the release uses: a tag made by .github/workflows/engines.yml
+# (e.g. engines-2.6.14-9.12). Empty: the release bundles them from Homebrew.

@@ -1,0 +1,39 @@
+#!/bin/sh
+# Fixes ownership, writes the CA file for the bundled GnuTLS, starts the
+# service, and starts Molehill for the logged-in user.
+set -u
+
+chown -R root:wheel /opt/molehill
+chmod -R go-w /opt/molehill
+for p in /Library/LaunchDaemons/io.github.giorgobiani.molehill.service.plist /Library/LaunchAgents/io.github.giorgobiani.molehill.plist; do
+    chown root:wheel "$p"
+    chmod 644 "$p"
+done
+mkdir -p /Library/Logs/Molehill
+chmod 755 /Library/Logs/Molehill
+
+# Homebrew's GnuTLS looks for CA certificates under Homebrew's prefix, which
+# a Mac without Homebrew doesn't have; libopenconnect is pointed here.
+pem=/opt/molehill/engines/cacert.pem
+if security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain > "$pem.tmp" && [ -s "$pem.tmp" ]; then
+    mv "$pem.tmp" "$pem"
+    chmod 644 "$pem"
+fi
+
+launchctl bootstrap system /Library/LaunchDaemons/io.github.giorgobiani.molehill.service.plist
+
+# The console user, unless the login window has the screen.
+user=$(stat -f %Su /dev/console)
+uid=$(stat -f %u /dev/console)
+if [ "$uid" -gt 0 ] && [ "$user" != "loginwindow" ]; then
+    launchctl bootout "gui/$uid/io.github.giorgobiani.molehill" 2>/dev/null || true
+    # Starts it in the menu bar (the agent passes --hidden).
+    launchctl bootstrap "gui/$uid" /Library/LaunchAgents/io.github.giorgobiani.molehill.plist
+    if [ ! -e /private/tmp/io.github.giorgobiani.molehill.upgrade ]; then
+        # A first install: show the window too.
+        sleep 2
+        launchctl asuser "$uid" sudo -u "$user" /usr/bin/open -b io.github.giorgobiani.Molehill
+    fi
+fi
+rm -f /private/tmp/io.github.giorgobiani.molehill.upgrade
+exit 0

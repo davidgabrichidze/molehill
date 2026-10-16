@@ -74,3 +74,70 @@ jobs:
             --title "Molehill $v" `
             --generate-notes `
             --verify-tag
+
+  # macOS: one .pkg per architecture, added to the release made above:
+  #   Molehill-<version>-<arch>.pkg and .sha256 (what the app's updater
+  #   looks for), and Molehill-<arch>.pkg under a fixed name for
+  #   /releases/latest/download/Molehill-<arch>.pkg.
+  macos:
+    name: macOS (${{ matrix.arch }})
+    needs: release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Release build
+        run: cargo build --release --workspace --locked --target ${{ matrix.target }}
+
+      - name: Engines
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A bundle pinned by engines.yml, if engines.lock names one;
+          # otherwise bundled from Homebrew now.
+          tag=$(grep -v '^#' packaging/macos/engines.lock 2>/dev/null | head -n 1 || true)
+          if [ -n "$tag" ]; then
+            gh release download "$tag" --pattern "$tag-${{ matrix.arch }}.tar.gz" --dir dist
+            mkdir -p dist/engines && tar -xzf "dist/$tag-${{ matrix.arch }}.tar.gz" -C dist/engines
+          else
+            packaging/macos/bundle-engines.sh dist/engines
+          fi
+
+      - name: Package
+        run: |
+          packaging/macos/make-app.sh ${{ matrix.target }} dist
+          pkg=$(packaging/macos/build-pkg.sh ${{ matrix.target }} dist/engines dist)
+          cp "$pkg" "dist/Molehill-${{ matrix.arch }}.pkg"
+
+      - name: Engine sources (GPL / LGPL)
+        if: matrix.arch == 'arm64'
+        run: packaging/macos/engine-sources.sh "dist/molehill-engine-sources-${GITHUB_REF_NAME#v}.tar"
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "dist/Molehill-$v-${{ matrix.arch }}.pkg" \
+            "dist/Molehill-$v-${{ matrix.arch }}.pkg.sha256" \
+            "dist/Molehill-${{ matrix.arch }}.pkg" \
+            $(ls dist/molehill-engine-sources-*.tar 2>/dev/null)
