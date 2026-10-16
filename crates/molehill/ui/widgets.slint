@@ -440,27 +440,34 @@ export component Scroll inherits Rectangle {
     }
 }
 
-// The Molehill mark: a mound with a tunnel and two eyes peeking out (see mole.svg).
+// The Molehill mark: layered hill arches, a tunnel, two eyes and a coral
+// nose (docs/brand/svg/logos/molehill-mark-tokyo-blue.svg). `tint` is the
+// middle arch, which follows the VPN state.
 export component Mole inherits Rectangle {
     in property <color> tint: Theme.accent;
-    in property <color> hole: Theme.bg;
-    in property <color> eyes: Theme.text;
+    in property <color> outer: #f4f4f8;
+    in property <color> inner: #414868;
+    in property <color> hole: #1a1b26;
+    in property <color> sides: #c0caf5;
+    in property <color> eyes: #f4f4f8;
+    in property <color> nose: #ff9e8a;
 
+    // The drawing spans x 2…62, y 30…58 of the 64 grid.
+    Path { viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28; commands: "M7 56 A25 25 0 0 1 57 56 Z"; fill: root.outer; }
+    Path { viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28; commands: "M14 56 A18 18 0 0 1 50 56 Z"; fill: root.tint; animate fill { duration: 250ms; } }
+    Path { viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28; commands: "M21 56 A11 13 0 0 1 43 56 Z"; fill: root.inner; }
+    Path { viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28; commands: "M25 56 A7 9 0 0 1 39 56 Z"; fill: root.hole; }
+    Path { viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28; commands: "M2 56 Q8 51 14 56 L14 58 L2 58 Z M50 56 Q56 51 62 56 L62 58 L50 58 Z"; fill: root.sides; }
     Path {
-        viewbox-x: 0; viewbox-y: 24; viewbox-width: 64; viewbox-height: 32;
-        commands: "M4 52 A28 26 0 0 1 60 52 Z M3.5 51 L60.5 51 A1.5 1.5 0 0 1 60.5 54 L3.5 54 A1.5 1.5 0 0 1 3.5 51 Z";
-        fill: root.tint;
-        animate fill { duration: 250ms; }
-    }
-    Path {
-        viewbox-x: 0; viewbox-y: 24; viewbox-width: 64; viewbox-height: 32;
-        commands: "M20 52 A12 13 0 0 1 44 52 Z";
-        fill: root.hole;
-    }
-    Path {
-        viewbox-x: 0; viewbox-y: 24; viewbox-width: 64; viewbox-height: 32;
-        commands: "M24.9 46 A2.6 2.6 0 1 0 30.1 46 A2.6 2.6 0 1 0 24.9 46 Z M33.9 46 A2.6 2.6 0 1 0 39.1 46 A2.6 2.6 0 1 0 33.9 46 Z";
+        viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28;
+        commands: "M27.85 49 A2.15 2.15 0 1 0 32.15 49 A2.15 2.15 0 1 0 27.85 49 Z M34.85 49 A2.15 2.15 0 1 0 39.15 49 A2.15 2.15 0 1 0 34.85 49 Z";
         fill: root.eyes;
+    }
+    // The nose: an ellipse tilted by -25°, drawn as two arcs.
+    Path {
+        viewbox-x: 2; viewbox-y: 30; viewbox-width: 60; viewbox-height: 28;
+        commands: "M40.237 51.321 A3.6 2.8 -25 1 1 46.763 48.279 A3.6 2.8 -25 1 1 40.237 51.321 Z";
+        fill: root.nose;
     }
 }
 

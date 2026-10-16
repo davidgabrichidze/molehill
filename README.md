@@ -1,103 +1,142 @@
-<p align="center"><img src="docs/logo.svg" width="120" alt="Molehill"></p>
+<p align="center">
+  <img src="docs/brand/png/hero/molehill-multi-vpn-hero.png" alt="Molehill: one app, all your VPNs" width="100%">
+</p>
 
-<h1 align="center">molehill</h1>
+<p align="center">
+  <img src="docs/brand/svg/logos/molehill-horizontal-dark.svg" alt="molehill" height="56">
+</p>
 
-<p align="center">One small, good-looking VPN client for Windows that digs all your tunnels:<br>
-OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.</p>
+<p align="center">
+  <b>One Windows VPN client for OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.</b><br>
+  Several tunnels at once, inline sign-in prompts, saved passwords, browser SSO,<br>
+  and the engines it needs installed and kept up to date for you.
+</p>
 
 ---
 
-Molehill is the Windows sibling of
-[omarchy-plugin-vpngui](https://github.com/giorgobiani/omarchy-plugin-vpngui):
-an Omarchy-flavoured (Tokyo Night, monospace accents) app that still feels at
-home on Windows 11 (native title bar, Fluent controls, tray icon).
+Most companies pick one VPN product, and most people end up needing three:
+the employer's AnyConnect, a client's FortiGate, a GlobalProtect portal and a
+home OpenVPN server, each with its own heavy client, tray icon and update
+nag. **Molehill replaces all of them with one small app.**
 
-## Status
+It is the Windows sibling of
+[omarchy-plugin-vpngui](https://github.com/giorgobiani/omarchy-plugin-vpngui)
+and shares its look and its sign-in logic: Tokyo Night colours, monospace,
+flat and square, nothing in the way.
 
-| VPN | Sign-in | Status |
-|-----|---------|--------|
-| **OpenVPN**: from a `.ovpn`, fetched from an OpenVPN Access Server with your username/password, or entered by hand (address, port, UDP/TCP, CA, tls-auth/tls-crypt) | Username & password, certificates, private key passphrase, static & dynamic challenge (OTP), browser SSO / SAML (`WEB_AUTH`, `OPEN_URL`, `CR_TEXT`) | ✅ Milestone 1 |
-| **Cisco AnyConnect** / ocserv (via OpenConnect) | Whatever form the server sends (group, username, password, OTP / second password), browser SSO / SAML, untrusted-certificate pinning | ✅ Milestone 2 |
-| **Fortinet** FortiGate (via OpenConnect) | Username & password, realm, 2FA codes (SMS, email, FortiToken, push), browser SSO / SAML, certificate pinning | ✅ Milestone 3 |
-| **Palo Alto GlobalProtect** (via OpenConnect) | Username & password, portal → gateway (picked automatically when there is one, or the saved one), 2FA challenges, browser SSO / SAML in your default browser, certificate pinning. No HIP reports yet | ✅ Milestone 4 |
+<p align="center">
+  <img src="docs/screenshots/list.png" alt="Connections, one connected and one asking for a password" width="32%">
+  <img src="docs/screenshots/cisco-prompts.png" alt="A Cisco login form and an untrusted certificate prompt" width="32%">
+  <img src="docs/screenshots/editor-forti.png" alt="Editing a Fortinet connection" width="32%">
+</p>
 
-What already works:
+## What it does
 
-- Several VPNs connected at once, each with its own switch; the header switch is
-  the master switch (off disconnects everything, on reconnects the last one).
-- Password, OTP and challenge prompts show up inline on the connection card.
-  Browser sign-in opens your default browser.
-- **Remember password** stores it in Windows Credential Manager (per user, DPAPI).
-  A password the server rejects is forgotten automatically.
-- **Components**: Molehill finds the latest OpenVPN release, downloads the
-  official MSI, checks it is signed by OpenVPN Inc., and installs only what it
-  needs (core + DCO/TAP drivers, no second GUI). It checks for updates twice a
-  day and offers them in the app.
-- Tray icon colored by state (blue idle, yellow connecting, green connected),
-  with its own themed menu to flip tunnels on and off. Closing the window
-  keeps your tunnels up.
-- Live traffic counters, connected time, and a per-tunnel log.
+- **All your VPNs side by side.** Every connection has its own switch, and
+  several can be up at the same time. The header switch is the master switch:
+  off disconnects everything, on reconnects the last one.
+- **Sign-in where you are.** Whatever the server asks for (username and
+  password, a group or gateway to choose, an SMS or authenticator code, a
+  FortiToken push, a second password) appears on the connection's card.
+  Molehill fills in what it knows and only asks for the rest.
+- **Browser SSO (SAML).** Microsoft Entra, Okta, Google and the rest open in
+  your default browser and hand the result back to Molehill, for every
+  protocol that supports it.
+- **Remembered, safely.** Passwords go to Windows Credential Manager (per user,
+  DPAPI). A password the server rejects is forgotten; a mistyped 2FA code is
+  not mistaken for a wrong password. The group or gateway you pick is
+  remembered for next time.
+- **Untrusted certificates, handled.** If Windows doesn't trust the server's
+  certificate, Molehill shows its fingerprint and asks once; after that the
+  connection is pinned to exactly that certificate.
+- **No prerequisites to hunt for.** OpenVPN and OpenConnect are downloaded,
+  verified and installed by Molehill. It checks for new versions twice a day
+  and offers the update in the app.
+- **Out of the way.** A tray icon that changes colour with the state (blue
+  idle, amber connecting, green connected), its own tray menu to flip tunnels,
+  and closing the window keeps the tunnels up. Live traffic counters,
+  connected time and a log per tunnel.
+
+## Supported VPNs
+
+| VPN | Engine | Sign-in |
+|-----|--------|---------|
+| **OpenVPN** | OpenVPN 2.6 (official MSI, DCO / TAP drivers) | A `.ovpn` file, a profile fetched from **OpenVPN Access Server** with your username and password, or a manual setup (address, port, UDP/TCP, CA, tls-auth / tls-crypt). Username & password, certificates, private key passphrase, static and dynamic challenges (OTP), browser SSO (`WEB_AUTH`, `OPEN_URL`, `CR_TEXT`) |
+| **Cisco AnyConnect** / ocserv | OpenConnect | Whatever form the server sends: group list, username, password, second password / OTP, SMS or Microsoft Authenticator codes. Browser SSO. Certificate pinning |
+| **Fortinet** FortiGate | OpenConnect | Username & password, realm, 2FA codes (SMS, email, FortiToken) or FortiToken push. Browser SSO the FortiClient way (redirect to `127.0.0.1:8020`). Certificate pinning |
+| **Palo Alto GlobalProtect** | OpenConnect | Portal, then gateway (chosen for you when there's one, or the one you picked last time). Username & password, 2FA challenges. Browser SSO in your default browser, like `gpauth`. Certificate pinning |
+
+WireGuard, shown in the artwork, is planned.
 
 ## Install
 
-Download `molehill-setup-<version>.exe` from Releases and run it. It installs
-the app and the Molehill service. Open Molehill. If OpenVPN is missing, the
-app offers to install it.
+1. Download `molehill-setup-<version>.exe` from
+   [Releases](https://github.com/giorgobiani/molehill/releases) and run it.
+   It installs the app and the Molehill service.
+2. Open Molehill and add a connection with **+ New**. If the engine for that
+   protocol is missing, the **Components** page offers to install it.
+
+Requires Windows 10 or 11, 64-bit.
 
 ## How it works
 
 ```
- molehill.exe (you)                     molehill-service.exe (LocalSystem)
- ┌─────────────────────┐   named pipe   ┌──────────────────────────────────┐
- │ Slint UI + tray     │ ◄────────────► │ tunnel manager                   │
- │ profiles (%APPDATA%)│   JSON lines   │  ├─ openvpn.exe ◄─ management if │
- │                     │                │  └─ oc-auth helper → openconnect │
- │ Credential Manager  │                │ component installer (MSI, signed)│
- └─────────────────────┘                └──────────────────────────────────┘
+ molehill.exe (you)                       molehill-service.exe (LocalSystem)
+ ┌───────────────────────┐   named pipe   ┌───────────────────────────────────────┐
+ │ Slint UI + tray       │ ◄────────────► │ tunnel manager                        │
+ │ profiles (%APPDATA%)  │   JSON lines   │  ├─ openvpn.exe  ◄─ management iface  │
+ │ Credential Manager    │                │  ├─ oc-auth helper (libopenconnect)   │
+ │ browser SSO handoff   │                │  │    └─ openconnect.exe + vpnc-script│
+ └───────────────────────┘                │  └─ Fortinet / GlobalProtect SSO      │
+                                          │ component installer (verified)        │
+                                          └───────────────────────────────────────┘
 ```
 
-- **The app** runs as you. It keeps your profiles in `%APPDATA%\Molehill` and
-  your saved passwords in Credential Manager, and opens browsers for SSO.
-- **The service** runs as LocalSystem, because creating tunnels, routes and
-  DNS needs it. It never shows UI. It drives `openvpn.exe` through the
-  management interface, so credentials never touch the disk.
-- **IPC** is the pipe `\\.\pipe\molehill`, limited to SYSTEM, Administrators
-  and interactive users.
+- **The app** runs as you. It keeps your profiles in `%APPDATA%\Molehill`, your
+  saved passwords in Credential Manager, and opens the browser for SSO.
+- **The service** runs as LocalSystem, because creating tunnels, routes and DNS
+  needs it. It never shows UI.
+  - **OpenVPN** is driven through its management interface, so credentials
+    never touch the disk.
+  - **OpenConnect protocols** sign in through a small helper process that loads
+    `libopenconnect` and turns every server form, certificate question and
+    browser step into a prompt in the app. `openconnect.exe` then runs the
+    tunnel with the session cookie, pinned to the certificate that was checked.
+- **IPC** is the pipe `\\.\pipe\molehill`, local only, open to SYSTEM,
+  Administrators and interactive users.
 
 ### Security model
 
-openvpn.exe runs as SYSTEM, so a config is effectively code with full
-privileges. Molehill locks it down:
+The engines run as SYSTEM, so anything that reaches them is treated as code
+with full privileges.
 
-1. When you import a profile, the app (running as you) inlines every file the
-   `.ovpn` references (`ca`, `cert`, `key`, `tls-auth`, `pkcs12`, …). The
-   service only ever receives one self-contained text.
-2. The service re-checks that text and refuses anything that runs programs,
+1. When you import an `.ovpn`, the app inlines every file it references (`ca`,
+   `cert`, `key`, `tls-auth`, `pkcs12`, …). The service only ever receives one
+   self-contained text.
+2. The service checks that text again and refuses anything that runs programs,
    loads libraries, writes files or still points at a path (`up`, `down`,
-   `plugin`, `script-security`, `log`, `management`, `providers`, …).
-   It also forces `--script-security 1`.
-3. Generated configs and management passwords live in
-   `%ProgramData%\Molehill\run`, readable only by SYSTEM and Administrators,
-   and are deleted as soon as they are no longer needed.
-4. The OpenVPN installer is downloaded over HTTPS and runs only if its
-   Authenticode signature is valid and issued to OpenVPN Inc. OpenConnect
-   publishes no signed Windows installer, so Molehill takes the official CI
-   build of each tagged release from gitlab.com/openconnect/openconnect
-   over HTTPS.
-5. OpenConnect sign-in runs in a separate helper process that loads
-   libopenconnect, so a failure there cannot take the service down.
-6. Every engine process is tied to the service with a job object: if the
-   service dies, Windows ends the tunnels with it, so nothing keeps running
-   as SYSTEM unattended.
-7. Connection ids from the app are checked before they name any file, and
-   the service refuses its data folders if a junction or symlink was planted
-   there before it first ran.
+   `plugin`, `script-security`, `log`, `management`, `providers`,
+   `tls-crypt-v2-verify`, …), and forces `--script-security 1`.
+3. Connection ids are validated before they name any file. The service's data
+   folders (`%ProgramData%\Molehill`) are locked to SYSTEM and Administrators,
+   and refused if a junction or symlink was planted there. Generated configs
+   and management passwords are deleted as soon as they're no longer needed.
+4. The OpenVPN installer runs only if its Authenticode signature is valid and
+   issued to OpenVPN Inc. OpenConnect publishes no signed Windows installer, so
+   Molehill takes the official CI build of each tagged release from
+   gitlab.com/openconnect/openconnect over HTTPS.
+5. Every engine process is tied to the service with a job object: if the
+   service dies, Windows ends the tunnels with it. The sign-in helper is a
+   separate process, so a failure in libopenconnect can't take the service down.
+6. SSO handoffs check what they accept: the Fortinet callback only on loopback,
+   the GlobalProtect `globalprotectcallback:` handler registered only while a
+   sign-in waits, and whatever was registered before put back afterwards.
+7. Secrets are kept out of logs: cookies, tokens and passwords are dropped or
+   redacted from engine output.
 
-Known limits: the service's pipe is open to every interactive user of the
-machine, so on a shared PC one user can see and disconnect another's
-tunnels (Molehill is meant for single-user machines; per-session scoping
-is on the roadmap). The OpenConnect installer has no Authenticode
-signature upstream, so its integrity rests on HTTPS to gitlab.com.
+Known limits: on a PC shared by several people at once, one user can see and
+disconnect another's tunnels (Molehill is meant for single-user machines).
+GlobalProtect HIP reports are not sent yet; many gateways work without them.
 
 ## Building
 
@@ -129,40 +168,41 @@ target\debug\molehill.exe
 ```
 
 ```powershell
-cargo test   # config sanitizer, importer, version compare
-```
-
-Headless screenshots of the main screens (demo data, nothing shown on screen):
-
-```powershell
-cargo run -p molehill --example snapshot -- snapshots
+cargo test                                            # sanitizer, importer, sign-in logic, SSO parsers
+cargo run -p molehill --example snapshot -- snapshots # headless screenshots with demo data
 ```
 
 ### Layout
 
 ```
 crates/
-  molehill-core/      shared: IPC protocol, profiles, .ovpn import/sanitize, secrets
-  molehill-service/   Windows service: pipe server, tunnels, component installer
+  molehill-core/      shared: IPC protocol, profiles, .ovpn import / sanitize, secrets
+  molehill-service/   Windows service: pipe server, tunnels, sign-in helper, SSO, installer
   molehill/           the app: Slint UI (ui/*.slint), tray, IPC client
 installer/            Inno Setup script
+docs/brand/           logo, icons and artwork (SVG sources, PNG exports, palette)
 ```
 
 ## Roadmap
 
 1. ✅ **OpenVPN**: profiles, every sign-in type, components, tray
-2. ✅ **OpenConnect engine + Cisco AnyConnect**: installs and updates
-   OpenConnect, server login forms, saved group/username/password, browser
-   SSO, certificate pinning on first connect
-3. ✅ **Fortinet**: password + 2FA through OpenConnect, realm, browser SSO
-   (SAML) the FortiClient way, via a redirect to `127.0.0.1:8020`
-4. ✅ **GlobalProtect**: portal and gateway login through OpenConnect; SAML in
-   the default browser like gpauth (`default-browser=2` prelogin, then the
-   `globalprotectcallback:` link, handled by Molehill only while it waits).
-   Still to do: HIP reports (OpenConnect can't run the HIP script on Windows)
-5. Per-user scoping of tunnels on shared machines; HIP reports for GlobalProtect
-6. Molehill self-update, signed releases, a winget manifest, light theme, and
-   following the Windows accent color
+2. ✅ **Cisco AnyConnect** through OpenConnect: server forms, groups, 2FA,
+   browser SSO, certificate pinning
+3. ✅ **Fortinet**: password + 2FA, realm, browser SSO
+4. ✅ **GlobalProtect**: portal and gateway, browser SSO in the default browser
+5. **Split tunnelling** per connection: only company networks and domains
+   through the VPN, internet and DNS on your own connection
+6. **WireGuard**
+7. GlobalProtect HIP reports; per-user tunnels on shared machines
+8. Self-update, signed releases, a winget manifest
+
+## Brand
+
+The mark (layered hill arches, a tunnel, two eyes and a coral nose), the app
+icons and the artwork live in [`docs/brand`](docs/brand) as SVG sources with
+PNG exports and the palette. The app draws the same mark in code for its
+window, tray and installer icons; the tray version changes colour with the
+VPN state.
 
 ## License
 

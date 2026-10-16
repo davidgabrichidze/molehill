@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
     let start_hidden = std::env::args().any(|a| a == "--hidden");
 
     let ui = AppWindow::new()?;
-    let px = logo::render(64, logo::ACCENT);
+    let px = logo::render_app_icon(64);
     ui.set_app_icon(slint::Image::from_rgba8(SharedPixelBuffer::clone_from_slice(&px, 64, 64)));
 
     let client = client::start(|ev| on_ui(move |app| app.on_client_event(ev)));

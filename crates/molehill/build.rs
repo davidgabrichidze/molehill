@@ -46,7 +46,7 @@ fn main() {
 
 /// A multi-size .ico with 32-bit BMP entries.
 fn build_ico(sizes: &[u32]) -> Vec<u8> {
-    let images: Vec<Vec<u8>> = sizes.iter().map(|&s| bmp_entry(s, &logo::render(s, logo::ACCENT))).collect();
+    let images: Vec<Vec<u8>> = sizes.iter().map(|&s| bmp_entry(s, &logo::render_app_icon(s))).collect();
     let mut ico = Vec::new();
     ico.extend_from_slice(&[0, 0, 1, 0]);
     ico.extend_from_slice(&(sizes.len() as u16).to_le_bytes());

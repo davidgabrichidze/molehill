@@ -151,8 +151,8 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     Mole {
-                        width: 32px;
-                        height: 16px;
+                        width: 36px;
+                        height: 17px;
                         tint: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.accent;
                     }
                 }
@@ -212,10 +212,14 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     alignment: center;
                     Mole {
-                        width: 96px;
+                        width: 103px;
                         height: 48px;
-                        tint: Theme.faint;
+                        outer: Theme.faint;
+                        tint: Theme.border;
+                        inner: Theme.surface;
+                        sides: Theme.faint;
                         eyes: Theme.muted;
+                        nose: Theme.muted;
                     }
                 }
                 Text {
