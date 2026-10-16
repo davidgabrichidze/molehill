@@ -261,6 +261,8 @@ mod tests {
         assert_eq!(s.hex(), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
     }
 
+    /// The Windows installer and its checksum (macOS: picks_this_macs_package).
+    #[cfg(windows)]
     #[test]
     fn reads_a_github_release() {
         let json = r#"{"tag_name":"v0.2.0","html_url":"https://github.com/giorgobiani/molehill/releases/tag/v0.2.0",
@@ -270,7 +272,11 @@ mod tests {
         assert_eq!(r.version, "0.2.0");
         assert_eq!(r.installer_url, "https://x/setup.exe");
         assert_eq!(r.checksum_url, "https://x/setup.exe.sha256");
-        // A release still uploading its files isn't offered.
+    }
+
+    /// A release still uploading its files isn't offered.
+    #[test]
+    fn skips_a_release_without_its_installer() {
         assert_eq!(parse_release(r#"{"tag_name":"v0.3.0","assets":[]}"#).unwrap(), None);
     }
 
