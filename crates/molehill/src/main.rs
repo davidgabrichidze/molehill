@@ -21,7 +21,7 @@ use molehill_core::APP_VERSION;
 use molehill_core::profile::{self, Profile, ProfileStore, Protocol};
 use molehill_core::setup::{self, ManualOvpn, TlsKeyMode};
 use molehill_core::{ovpn, paths, secrets};
-use slint::{ComponentHandle, Model, ModelRc, SharedPixelBuffer, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tray::{Tray, TrayAction, TrayState};
 
 slint::include_modules!();
@@ -67,6 +67,8 @@ struct State {
     /// Version already announced with a notification this session.
     app_update_notified: Option<String>,
     settings: settings::Settings,
+    /// A prompt arrived: bring the list up once the event is handled.
+    show_list: bool,
 }
 
 struct App {
@@ -109,13 +111,13 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     selfupdate::set_app_id();
+    // COM on the UI thread, for the taskbar badge (ITaskbarList3).
+    let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
     // A crash during a GlobalProtect sign-in leaves the handler registered.
     gpcallback::unregister();
     let start_hidden = std::env::args().any(|a| a == "--hidden");
 
     let ui = AppWindow::new()?;
-    let px = logo::render_app_icon(64);
-    ui.set_app_icon(slint::Image::from_rgba8(SharedPixelBuffer::clone_from_slice(&px, 64, 64)));
 
     let client = client::start(|ev| on_ui(move |app| app.on_client_event(ev)));
     let mut state = State { settings: settings::load(), ..Default::default() };
@@ -149,6 +151,10 @@ fn main() -> anyhow::Result<()> {
         let _ = cell.set(app.clone());
     });
     app.wire_callbacks();
+    {
+        let st = app.state.borrow();
+        platform::set_saved_placement(st.settings.window_pos, st.settings.window_height);
+    }
     app.apply_theme();
     app.refresh_subtitles();
 
@@ -185,20 +191,22 @@ fn main() -> anyhow::Result<()> {
 impl App {
     // ── theme, window placement, order ──────────────────────────────
 
-    pub fn is_dark(&self) -> bool {
-        match self.state.borrow().settings.theme {
+    /// Applies the theme to both windows and the title bar. Also runs from
+    /// the window procedure (Windows changed its theme), so it must not
+    /// insist on the state: if that's busy, the next refresh catches up.
+    pub fn apply_theme(&self) {
+        let Ok(st) = self.state.try_borrow() else { return };
+        let mode = st.settings.theme;
+        drop(st);
+        let dark = match mode {
             settings::ThemeMode::System => settings::system_prefers_dark(),
             settings::ThemeMode::Light => false,
             settings::ThemeMode::Dark => true,
-        }
-    }
-
-    /// Applies the theme to both windows and the title bar.
-    pub fn apply_theme(&self) {
-        let dark = self.is_dark();
+        };
         self.ui.global::<Theme>().set_dark(dark);
         self.menu.global::<Theme>().set_dark(dark);
-        self.ui.set_theme_label(self.state.borrow().settings.theme.label().into());
+        self.ui.set_theme_label(mode.label().into());
+        platform::set_dark(dark);
         if let Some(h) = platform::main_hwnd(self.ui.window()) {
             platform::title_bar(h, dark);
         }
@@ -212,13 +220,10 @@ impl App {
         self.apply_theme();
     }
 
-    pub fn saved_window(&self) -> (Option<(i32, i32)>, Option<f64>) {
-        let st = self.state.borrow();
-        (st.settings.window_pos, st.settings.window_height)
-    }
-
+    /// From the window procedure after a move or resize; skipped (not
+    /// crashed) if the state happens to be busy.
     pub fn remember_window(&self, pos: (i32, i32), height: f64) {
-        let mut st = self.state.borrow_mut();
+        let Ok(mut st) = self.state.try_borrow_mut() else { return };
         st.settings.window_pos = Some(pos);
         st.settings.window_height = Some(height);
         settings::save(&st.settings);
@@ -470,6 +475,10 @@ impl App {
                 ClientEvent::Event(ev) => self.on_event(&mut st, ev),
             }
         }
+        if std::mem::take(&mut self.state.borrow_mut().show_list) {
+            self.show();
+            self.ui.set_page(Page::List);
+        }
         self.refresh();
     }
 
@@ -510,9 +519,9 @@ impl App {
                         let _ = open::that(url);
                     }
                 } else {
-                    // Someone has to type something: make sure they can see it.
-                    self.show();
-                    self.ui.set_page(Page::List);
+                    // Someone has to type something: make sure they can see it,
+                    // once the state is released (showing reads it).
+                    st.show_list = true;
                 }
                 let username = st.store.get(&id).and_then(|p| p.username.clone());
                 let t = st.tunnels.entry(id).or_default();
@@ -1286,6 +1295,18 @@ impl App {
             TrayState::Failed => logo::CORAL,
             TrayState::Offline => logo::WHITE_MARK,
         };
+        // The title bar icon, and a badge on the taskbar button (no badge:
+        // nothing connected). The Start menu shows the .exe's own icon.
+        platform::set_window_icon_tint(self.ui.window(), tint);
+        let badge = match mark {
+            TrayState::Idle => None,
+            TrayState::Connecting => Some("Connecting"),
+            TrayState::Connected => Some("Connected"),
+            TrayState::ConnectedMany => Some("Several VPNs connected"),
+            TrayState::Failed => Some("A connection failed"),
+            TrayState::Offline => Some("Service not running"),
+        };
+        platform::set_taskbar_badge(self.ui.window(), badge.map(|label| (tint, label)));
         let tint = slint::Color::from_rgb_u8(tint[0], tint[1], tint[2]);
         self.ui.set_mark_tint(tint);
         self.menu.set_mark_tint(tint);

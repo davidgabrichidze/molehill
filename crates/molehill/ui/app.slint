@@ -57,7 +57,6 @@ component Field inherits VerticalLayout {
 
 export component AppWindow inherits Window {
     title: "Molehill";
-    icon: root.app-icon;
     background: Theme.bg;
     default-font-family: Theme.mono;
     default-font-size: 12px;
@@ -66,7 +65,6 @@ export component AppWindow inherits Window {
     min-height: 420px;
     preferred-height: 560px;
 
-    in property <image> app-icon;
     in-out property <Page> page: Page.list;
 
     // ── list ────────────────────────────────────────────────────────
@@ -289,14 +287,20 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.connections.length > 0: Scroll {
+            if root.connections.length > 0: list := Scroll {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 6px;
-                    for item in root.connections: ConnectionCard {
+                    for item[i] in root.connections: ConnectionCard {
                         item: item;
+                        // The last card tells the list where the content really ends.
+                        init => { if i == root.connections.length - 1 { list.extent = self.y + self.height; } }
+                        changed y => { if i == root.connections.length - 1 { list.extent = self.y + self.height; } }
+                        changed height => { if i == root.connections.length - 1 { list.extent = self.y + self.height; } }
                         z: self.dragging ? 1 : 0;
                         reorder(steps) => { root.reorder(item.id, steps); }
+                        // Height is computed on demand, so it includes the new prompt.
+                        prompt-shown => { list.reveal(self.y, self.height); }
                         locked: root.locked;
                         toggle => { root.toggle(item.id); }
                         edit => { root.edit(item.id); }

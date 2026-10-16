@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
-use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUNDSMALL, DwmSetWindowAttribute,
@@ -18,11 +18,11 @@ use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumThreadWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetWindowLongW,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETDPISCALEDSIZE, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextW, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
+    GetWindowTextW, HWND_TOPMOST, ICON_BIG, ICON_SMALL, SM_CXICON,
     SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
     MINMAXINFO, PostMessageW, RegisterWindowMessageW, SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_DPICHANGED, WM_ENDSESSION,
     WM_GETMINMAXINFO, WM_QUERYENDSESSION, WM_SETICON, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GetClientRect, GetCursorPos,
-    SM_CYVIRTUALSCREEN, WM_EXITSIZEMOVE, WM_SETTINGCHANGE,
+    SM_CYVIRTUALSCREEN, WM_EXITSIZEMOVE, WM_SETTINGCHANGE, SWP_NOMOVE,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -83,17 +83,9 @@ fn dwm(hwnd: HWND, attr: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE, valu
 /// then to the front.
 pub fn style_main(hwnd: HWND) {
     unsafe {
-        // The icon embedded by build.rs (resource id 1), for title bar and taskbar.
-        if let Ok(module) = GetModuleHandleW(None) {
-            for (kind, size) in [(ICON_SMALL, GetSystemMetrics(SM_CXSMICON)), (ICON_BIG, GetSystemMetrics(SM_CXICON))] {
-                if let Ok(icon) = LoadImageW(Some(module.into()), PCWSTR(1 as _), IMAGE_ICON, size, size, LR_DEFAULTCOLOR) {
-                    SendMessageW(hwnd, WM_SETICON, Some(WPARAM(kind as usize)), Some(LPARAM(icon.0 as isize)));
-                }
-            }
-        }
-        let mut dark = true;
-        crate::with_app(|app| dark = app.is_dark());
-        title_bar(hwnd, dark);
+        // Title bar and taskbar icon, in the current state's colour.
+        send_icons(hwnd, ICON_TINT.get());
+        title_bar(hwnd, DARK.get());
         let _ = SetWindowSubclass(hwnd, Some(main_proc), 1, 0);
         // Close and minimize only, height resizable (the width is fixed by
         // WM_GETMINMAXINFO): winit owns the window styles, so ask it.
@@ -108,6 +100,26 @@ pub fn style_main(hwnd: HWND) {
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
     }
+}
+
+/// Physical top-left and logical height of the window, as last left.
+type Placement = (Option<(i32, i32)>, Option<f64>);
+
+thread_local! {
+    // Handed over by the app, so window code never reads its state (the
+    // window can be shown while that state is borrowed).
+    static DARK: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static PLACEMENT: std::cell::Cell<Placement> = const { std::cell::Cell::new((None, None)) };
+}
+
+/// The theme the main window's title bar should use.
+pub fn set_dark(dark: bool) {
+    DARK.set(dark);
+}
+
+/// Where the window was left last time (physical top-left, logical height).
+pub fn set_saved_placement(pos: Option<(i32, i32)>, height: Option<f64>) {
+    PLACEMENT.set((pos, height));
 }
 
 /// Title bar and border in the theme's colours (COLORREF is 0x00BBGGRR).
@@ -131,32 +143,49 @@ fn place_main_once(hwnd: HWND) {
     if DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let (mut pos, mut height) = (None, None);
-    crate::with_app(|app| (pos, height) = app.saved_window());
+    let (pos, height) = PLACEMENT.get();
     let height = height.unwrap_or(DEFAULT_HEIGHT).max(MIN_HEIGHT);
     unsafe {
-        let dpi = GetDpiForWindow(hwnd);
-        let Some((w, h)) = outer_size(hwnd, dpi, height) else { return };
-        let on_screen = pos.filter(|&(x, y)| {
-            // The title bar's middle must be on some monitor.
-            let probe = POINT { x: x + w / 2, y: y + 12 };
-            !MonitorFromPoint(probe, MONITOR_DEFAULTTONULL).is_invalid()
+        let monitor_dpi = |m: windows::Win32::Graphics::Gdi::HMONITOR| {
+            let (mut x, mut y) = (0u32, 0u32);
+            if GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut x, &mut y).is_ok() && x > 0 { x } else { GetDpiForWindow(hwnd) }
+        };
+        // The saved spot, if the title bar's middle is still on a screen.
+        let saved = pos.and_then(|(x, y)| {
+            let probe = POINT { x: x + 150, y: y + 12 };
+            let m = MonitorFromPoint(probe, MONITOR_DEFAULTTONULL);
+            (!m.is_invalid()).then_some((x, y, m))
         });
-        let (x, y) = match on_screen {
-            Some(p) => p,
+        let (x, y, dpi) = match saved {
+            Some((x, y, m)) => (x, y, monitor_dpi(m)),
             None => {
+                // Centred on the screen under the cursor, sized for *its* scale.
                 let mut cursor = POINT::default();
                 let _ = GetCursorPos(&mut cursor);
-                let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+                let m = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+                let dpi = monitor_dpi(m);
+                let Some((w, h)) = outer_size(hwnd, dpi, height) else { return };
                 let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
-                let work = if GetMonitorInfoW(monitor, &mut info).as_bool() { info.rcWork } else { RECT { left: 0, top: 0, right: 1920, bottom: 1080 } };
+                let work = if GetMonitorInfoW(m, &mut info).as_bool() { info.rcWork } else { RECT { left: 0, top: 0, right: 1920, bottom: 1080 } };
                 let h = h.min(work.bottom - work.top);
-                (work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2)
+                (work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2, dpi)
             }
         };
-        // If this lands on a screen with another scale, WM_DPICHANGED
-        // follows and keeps the logical height.
+        let Some((w, h)) = outer_size(hwnd, dpi, height) else { return };
         let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+        // Windows doesn't always announce a scale change for a window moved
+        // this early, which left the UI laid out for the old scale (content
+        // narrower than the window). Settle scale and size explicitly.
+        let now = GetDpiForWindow(hwnd);
+        crate::with_app(|app| {
+            let window = slint::ComponentHandle::window(&app.ui);
+            if (window.scale_factor() - now as f32 / 96.0).abs() > 0.01 {
+                window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: now as f32 / 96.0 });
+            }
+        });
+        if let Some((w, h)) = outer_size(hwnd, now, height) {
+            let _ = SetWindowPos(hwnd, None, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+        }
     }
 }
 
@@ -327,4 +356,93 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         _ => {}
     }
     unsafe { DefSubclassProc(hwnd, msg, wp, lp) }
+}
+
+thread_local! {
+    /// The middle arch of the window's icon (title bar, taskbar, Alt+Tab).
+    static ICON_TINT: std::cell::Cell<[u8; 3]> = const { std::cell::Cell::new(crate::logo::ACCENT) };
+}
+
+/// Recolours the window's icon for the VPN state; cheap when unchanged.
+pub fn set_window_icon_tint(window: &slint::Window, tint: [u8; 3]) {
+    if ICON_TINT.replace(tint) == tint {
+        return;
+    }
+    if let Some(h) = main_hwnd(window) {
+        send_icons(h, tint);
+    }
+}
+
+fn send_icons(hwnd: HWND, tint: [u8; 3]) {
+    use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, DestroyIcon, HICON};
+    thread_local! {
+        static OLD: std::cell::Cell<[isize; 2]> = const { std::cell::Cell::new([0, 0]) };
+    }
+    let mut made = [0isize; 2];
+    for (n, (kind, metric)) in [(ICON_SMALL, SM_CXSMICON), (ICON_BIG, SM_CXICON)].into_iter().enumerate() {
+        let size = unsafe { GetSystemMetrics(metric) }.max(16) as u32;
+        let rgba = crate::logo::render_app_icon(size, tint);
+        // 32-bit icons carry their alpha in the colour bits (BGRA); the AND
+        // mask is then ignored, but must be there.
+        let bgra: Vec<u8> = rgba.chunks(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
+        let and_mask = vec![0u8; (size.div_ceil(32) * 4 * size) as usize];
+        let Ok(module) = (unsafe { GetModuleHandleW(None) }) else { return };
+        if let Ok(icon) = unsafe { CreateIcon(Some(module.into()), size as i32, size as i32, 1, 32, and_mask.as_ptr(), bgra.as_ptr()) } {
+            unsafe { SendMessageW(hwnd, WM_SETICON, Some(WPARAM(kind as usize)), Some(LPARAM(icon.0 as isize))) };
+            made[n] = icon.0 as isize;
+        }
+    }
+    // Windows doesn't free icons it was handed; free the previous pair.
+    for old in OLD.replace(made) {
+        if old != 0 {
+            let _ = unsafe { DestroyIcon(HICON(old as *mut _)) };
+        }
+    }
+}
+
+/// A small badge on the taskbar button in the state's colour (Windows 11
+/// shows the program's own icon on the button, not the window's, so this
+/// is the way to show live status there). `None` clears it.
+pub fn set_taskbar_badge(window: &slint::Window, badge: Option<([u8; 3], &str)>) {
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
+    use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
+    use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, DestroyIcon};
+    thread_local! {
+        static TASKBAR: std::cell::OnceCell<Option<ITaskbarList3>> = const { std::cell::OnceCell::new() };
+        static LAST: std::cell::Cell<Option<[u8; 3]>> = const { std::cell::Cell::new(None) };
+    }
+    let key = badge.map(|(c, _)| c);
+    let Some(hwnd) = main_hwnd(window) else { return };
+    if LAST.get() == key && key.is_some() {
+        return;
+    }
+    TASKBAR.with(|t| {
+        let Some(list) = t.get_or_init(|| unsafe {
+            let list: Option<ITaskbarList3> = CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER).ok();
+            list.filter(|l| l.HrInit().is_ok())
+        }) else {
+            return;
+        };
+        unsafe {
+            match badge {
+                None => {
+                    let _ = list.SetOverlayIcon(hwnd, windows::Win32::UI::WindowsAndMessaging::HICON::default(), PCWSTR::null());
+                }
+                Some((tint, label)) => {
+                    let size = 16u32;
+                    let rgba = crate::logo::render_badge(size, tint);
+                    let bgra: Vec<u8> = rgba.chunks(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
+                    let and_mask = vec![0u8; (size.div_ceil(32) * 4 * size) as usize];
+                    let Ok(module) = GetModuleHandleW(None) else { return };
+                    if let Ok(icon) = CreateIcon(Some(module.into()), size as i32, size as i32, 1, 32, and_mask.as_ptr(), bgra.as_ptr()) {
+                        let label: Vec<u16> = label.encode_utf16().chain([0]).collect();
+                        let _ = list.SetOverlayIcon(hwnd, icon, PCWSTR(label.as_ptr()));
+                        // The taskbar keeps its own copy.
+                        let _ = DestroyIcon(icon);
+                    }
+                }
+            }
+        }
+        LAST.set(key);
+    });
 }

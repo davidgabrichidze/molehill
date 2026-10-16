@@ -63,9 +63,14 @@ export component ConnectionCard inherits Rectangle {
     // Typing breaks the bindings above, so a new prompt (a retry after a
     // wrong password, say) refreshes them by hand.
     property <int> seen-prompt;
+    // A new prompt: ask the list to bring this card into view.
+    callback prompt-shown();
     changed item => {
         if root.item.prompt-id != root.seen-prompt {
             root.seen-prompt = root.item.prompt-id;
+            if root.item.prompt-kind != "" {
+                root.prompt-shown();
+            }
             root.user = root.item.prompt-username;
             root.secret = "";
             root.remember = root.item.remember;
@@ -84,21 +89,15 @@ export component ConnectionCard inherits Rectangle {
         root.secret = "";
     }
 
-    // Dragging by the grip moves the card under the pointer; on release the
-    // list asks to move it by whole cards.
+    // Dragging by the grip moves an outline of the card with the pointer;
+    // on release the list moves the card by whole cards. (The card itself
+    // stays put: its layout must be its direct child to size correctly
+    // around wrapped text.)
     callback reorder(int);
     out property <bool> dragging: grip.pressed;
-    // The grip stays put (outside the moving body), so its mouse-y is a
-    // steady reference.
     property <length> last-dy;
     property <length> drag-dy: grip.pressed ? root.last-dy : 0px;
-    min-height: lay.min-height;
-    preferred-height: lay.preferred-height;
 
-    body := Rectangle {
-    y: root.drag-dy;
-    width: parent.width;
-    height: parent.height;
     background: root.dragging ? Theme.surface-hover : Theme.surface;
     border-width: 1px;
     border-color: root.dragging ? Theme.accent : root.item.prompt-kind != "" ? Theme.accent
@@ -112,7 +111,7 @@ export component ConnectionCard inherits Rectangle {
         background: root.item.prompt-kind != "" ? Theme.accent : root.item.state == "off" ? transparent : root.state-color;
     }
 
-    lay := VerticalLayout {
+    VerticalLayout {
         padding: 10px;
         padding-left: 12px;
         spacing: 8px;
@@ -298,6 +297,15 @@ export component ConnectionCard inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
+
+    // Where the card will go: an outline that follows the pointer.
+    if root.dragging: Rectangle {
+        y: root.drag-dy;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.accent.transparentize(0.85);
+        border-width: 1px;
+        border-color: Theme.accent;
     }
 
     // The grip: the card's left edge, dotted on hover.

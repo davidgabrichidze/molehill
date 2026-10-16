@@ -421,6 +421,10 @@ export component Check inherits Rectangle {
 /// Vertical scrolling for a page, with a hairline position bar instead of
 /// Windows' scroll bar.
 export component Scroll inherits Rectangle {
+    // Where the content really ends, if the page reports it (the list does,
+    // from its last card). Slint's reported preferred height counts wrapped
+    // text as one line, so it can fall short; the laid-out cards are right.
+    in-out property <length> extent: 0px;
     // How far the content can move, and the thumb's size and travel.
     property <length> range: max(0px, f.content-height - f.height);
     property <length> thumb: max(24px, root.height * f.height / max(1px, f.content-height));
@@ -431,9 +435,11 @@ export component Scroll inherits Rectangle {
         // Desktop scrolling: the wheel and the bar. Dragging the content
         // would steal the drag from the cards' reorder grip.
         interactive: false;
-        content-height: max(self.height, content.preferred-height);
+        content-height: max(self.height, root.extent > 0 ? root.extent : content.preferred-height);
         content := VerticalLayout {
             width: f.width - 10px;
+            // At least as tall as the content really is (see extent).
+            height: max(f.height, root.extent > 0 ? root.extent : self.preferred-height);
             alignment: start;
             @children
         }
@@ -459,6 +465,14 @@ export component Scroll inherits Rectangle {
             }
         }
         moved => { root.scroll-to(self.mouse-y - self.grab); }
+    }
+    // Scrolls just enough to show content from `y` to `y + h`.
+    public function reveal(y: length, h: length) {
+        if y + f.content-y < 0 {
+            f.content-y = - y;
+        } else if y + h + f.content-y > f.height {
+            f.content-y = max(- root.range, f.height - y - min(h, f.height));
+        }
     }
     function scroll-to(thumb-y: length) {
         f.content-y = - max(0px, min(root.range, thumb-y * root.range / max(1px, root.height - root.thumb)));

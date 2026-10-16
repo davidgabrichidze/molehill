@@ -100,7 +100,7 @@ fn rasterize(size: u32, f: impl Fn(f32, f32) -> Option<[u8; 3]>) -> Vec<u8> {
 /// The application icon: the mark on a rounded night tile, like
 /// `molehill-app-icon-blue.svg`, with the mark larger at small sizes so it
 /// stays readable in the taskbar.
-pub fn render_app_icon(size: u32) -> Vec<u8> {
+pub fn render_app_icon(size: u32, tint: [u8; 3]) -> Vec<u8> {
     let small = size <= 32;
     let (inset, corner) = (if small { 0.0 } else { 20.0 / 1024.0 }, if small { 0.18 } else { 220.0 / 1024.0 });
     // The mark spans this fraction of the tile's width.
@@ -117,6 +117,21 @@ pub fn render_app_icon(size: u32) -> Vec<u8> {
         }
         let gx = 2.0 + (u - (1.0 - span) / 2.0) / span * 60.0;
         let gy = 44.0 + (v - 0.5) / span * 60.0;
-        Some(mark(gx, gy, ACCENT).unwrap_or(TILE))
+        Some(mark(gx, gy, tint).unwrap_or(TILE))
+    })
+}
+
+/// The taskbar badge: a filled disc in the state colour with a dark ring,
+/// so it reads on any taskbar.
+pub fn render_badge(size: u32, tint: [u8; 3]) -> Vec<u8> {
+    rasterize(size, |u, v| {
+        let d = ((u - 0.5).powi(2) + (v - 0.5).powi(2)).sqrt();
+        if d <= 0.34 {
+            Some(tint)
+        } else if d <= 0.48 {
+            Some(NIGHT)
+        } else {
+            None
+        }
     })
 }
