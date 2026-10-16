@@ -1,6 +1,6 @@
 # Molehill on macOS — design
 
-Status: **approved**, rev 3 · 2026-10-16 · author: David Gabrichidze (with Claude Code)
+Status: **approved**, rev 4 (implementation findings in §7 and §5, marked *rev 4*) · 2026-10-16 · author: David Gabrichidze (with Claude Code)
 
 ## 1. Goal
 
@@ -108,8 +108,8 @@ check on Windows.
 - **Bundling, done by a separate `engines.yml` workflow** for each
   architecture:
   - `brew install openvpn openconnect` at pinned versions.
-  - Copy `openvpn`, `openconnect`, `libopenconnect.5.dylib`, all their dylibs
-    and Homebrew's `vpnc-script` into `engines/`.
+  - Copy `openvpn`, `openconnect`, `libopenconnect.5.dylib` and all their
+    dylibs into `engines/`. *(rev 4: no `vpnc-script`; see §7.)*
   - Rewrite install names to `@loader_path` and **ad-hoc re-sign every Mach-O**
     (`codesign --force -s -`). Editing install names breaks the linker's
     ad-hoc signature, and arm64 won't run unsigned code.
@@ -131,17 +131,19 @@ check on Windows.
   - Each update rewrites the file, so it follows OS root updates.
 - **Paths and Components page:**
   - `paths.rs` and `components.rs` on macOS point only at `/opt/molehill/engines`.
-  - The Components page shows the bundled versions. The Install/Update buttons
-    are hidden through a Slint property `components-installable` (true on
-    Windows), and engines update with Molehill releases.
-  - `openvpn --version` is checked at start. Anything other than the pinned
-    major.minor is logged as an error, because the §6 blocklist review is per
-    version.
+  - The Components page shows the bundled versions. *(rev 4)* The macOS
+    service reports the bundled version as the latest, so the page reads "up
+    to date" and shows no Install/Update button, with no UI change.
+  - *(rev 4)* No runtime version pin. Reading OpenVPN's source showed that
+    with `--up` set, 2.7+ skips its built-in `dns-updown`, and a server can't
+    push `dns-updown` (it needs script permission). So the protection doesn't
+    depend on the version. Instead, the blocklist is checked against the
+    OpenVPN manual whenever `engines.yml` moves to a new version.
 - **Licensing:**
   - OpenVPN is GPLv2 and OpenConnect is LGPLv2.1.
   - `/opt/molehill/engines/licenses/` holds their license texts.
   - The release attaches the exact upstream source tarballs, Homebrew's
-    formula patches and the `vpnc-script` source.
+    formula patches.
   - Molehill stays MIT.
 
 ## 6. OpenVPN on macOS
@@ -156,8 +158,8 @@ check on Windows.
   holds: **no profile ever supplies or influences a script.**
   - **Blocklist:** on macOS, `ovpn.rs` also refuses `dns-updown` (OpenVPN 2.7)
     and `client-crresponse` (§3; Windows is the subject of a separate issue).
-    The service passes `--dns-updown disable` when the bundled version
-    understands it.
+    *(rev 4)* `--dns-updown disable` isn't needed: with `--up` set, OpenVPN
+    2.7+ skips its own `dns-updown` (and 2.6 would reject the option).
   - **The hook is Molehill's own binary, not a shell script.** The arguments
     are
     `--script-security 2 --up "'/opt/molehill/bin/molehill-service' dns-up <id>" --down "… dns-down <id>" --up-restart`.
@@ -189,14 +191,40 @@ check on Windows.
 ## 7. OpenConnect on macOS (AnyConnect, Fortinet, GlobalProtect)
 
 - **Interface:** macOS picks the `utunN` name itself.
-  - On macOS `--interface` is left out, and `--script` is the bundled
-    `vpnc-script`, which handles routes and DNS via `scutil` itself.
-  - The interface name for counters comes from the address in "Connected as
-    &lt;ip&gt;" (`openconnect.rs:330`), matched against `getifaddrs`, so no
-    wrapper script is needed.
-  - The VPN gateway's host route is written to `state/routes` once the tunnel
-    is up, so the start-up sweep can remove it after a crash. vpnc-script's
-    `State:` keys go into the same sweep.
+  - On macOS `--interface` is left out.
+- *(rev 4)* **`--script` is `molehill-service vpnc-hook <id>`, not the stock
+  `vpnc-script`.** Reading the script's macOS branch showed it doesn't fit a
+  root daemon running several tunnels:
+  - It runs `networksetup -setdnsservers <active service> <VPN DNS>`, which
+    changes the *saved* Wi-Fi settings, not just the current state. On
+    disconnect it sets them to `Empty`, which erases DNS servers the user set
+    by hand. After a crash, the Wi-Fi keeps the VPN's DNS servers, even
+    across a reboot.
+  - For split-include tunnels it also writes the VPN DNS into the physical
+    service's DNS key.
+  - Full tunnels delete the default route and restore it from a single file
+    afterwards. A crash loses the route, and two tunnels overwrite each
+    other's saved copy.
+  - `CISCO_DEF_DOMAIN`, which the server supplies, goes into an `scutil`
+    heredoc unchecked.
+
+  The hook (`vpnc_macos.rs`) reads only the vpnc-script variables it needs,
+  and uses a value only if it parses as an address, a prefix length, a
+  number or a plain domain. It then:
+  - runs `ifconfig` on the utun device;
+  - routes everything through the tunnel with `0.0.0.0/1` + `128.0.0.0/1`
+    (and `::/1` + `8000::/1`), which disappear with the device, so the
+    default route is never touched;
+  - adds split-include and split-exclude routes;
+  - adds a host route to the VPN gateway through the current default
+    gateway;
+  - publishes DNS under the tunnel's own `Molehill-<id>` keys, with the same
+    code as `dns-up`. A split tunnel that pushes no domains leaves DNS
+    alone.
+  - records the routes that outlive the device in `state/<id>`, for
+    `disconnect` and the start-up sweep;
+  - writes the device name to `run/<id>.dev`, which is where the traffic
+    counters get it.
 - **Traffic counters:**
   - `netstats_macos.rs` reads `sysctl` `NET_RT_IFLIST2` (64-bit `if_data64`).
   - It does not use `getifaddrs`' `if_data`, which is 32-bit and wraps at 4 GiB.
@@ -428,7 +456,7 @@ PR. `docs/` is the project site, so the doc is dropped from the PR branch.
 
 | Risk | Mitigation |
 |---|---|
-| Profile sanitiser gaps become root code execution under `script-security 2` | macOS blocklist additions, pinned OpenVPN version with a per-version review, `--dns-updown disable`, the hook is our own binary that trusts no environment, and a version check at start. |
+| Profile sanitiser gaps become root code execution under `script-security 2` | macOS blocklist additions, reviewed against the manual on every engine bump; the hook is our own binary that trusts no environment. |
 | Notification authorization refused for an ad-hoc bundle | `osascript` fallback; only one notification exists. |
 | Keychain re-prompt after each update | Documented. |
 | Homebrew drops Intel bottles, or `macos-15-intel` is retired | Engine bundles are built once per version and stored as release assets (§5). |
