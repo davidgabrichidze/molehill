@@ -1,6 +1,6 @@
 # Molehill on macOS — design
 
-Status: draft for approval · 2026-10-16 · author: David Gabrichidze (with Claude Code)
+Status: draft for approval, rev 2 (after builder review) · 2026-10-16 · author: David Gabrichidze (with Claude Code)
 
 ## 1. Goal
 
@@ -8,7 +8,8 @@ Run Molehill on macOS 15 Sequoia and later, on Apple Silicon (`aarch64-apple-dar
 and Intel (`x86_64-apple-darwin`), with everything the Windows build does today:
 
 - OpenVPN, Cisco AnyConnect, Fortinet and GlobalProtect
-- inline sign-in prompts, browser SSO, saved passwords, client certificates
+- inline sign-in prompts and browser SSO
+- saved passwords and client certificates
 - several tunnels at once
 - a menu-bar icon in place of the tray
 - self-update
@@ -16,8 +17,9 @@ and Intel (`x86_64-apple-darwin`), with everything the Windows build does today:
 It ships as a downloadable release for the author, their colleagues and
 anyone else, and goes upstream to `giorgobiani/molehill`.
 
-**Hard constraint:** the Windows build behaves exactly as it does today. Windows
-code may move behind `#[cfg(windows)]`, but its logic is not changed.
+**Hard constraint:** the Windows build *behaves* exactly as it does today. Most
+Windows code only moves behind `#[cfg(windows)]`. Where shared code has to
+change, §3 lists each edit and a test covers it.
 
 ### Non-goals
 
@@ -25,8 +27,8 @@ code may move behind `#[cfg(windows)]`, but its logic is not changed.
   builds are ad-hoc signed.
 - macOS 14 and older.
 - Keychain-resident or smart-card client certificates. Only `.p12`/`.pfx`
-  files are supported (see §8). A PKCS#11 bridge can come later.
-- Linux. The `cfg` split makes it easier later, but nothing here targets it.
+  files are supported (§8); a PKCS#11 bridge can come later.
+- Linux.
 
 ## 2. Decisions
 
@@ -34,293 +36,364 @@ code may move behind `#[cfg(windows)]`, but its logic is not changed.
 |---|---|
 | Upstream delivery | **One pull request**, fork → `giorgobiani:main`. Upstream squash-merges anyway. Inside the PR, commits are ordered so each one builds and passes Windows CI (§13). |
 | Minimum macOS | 15 Sequoia, because we bundle Homebrew bottles built on `macos-15` runners. |
-| Privileged part | `molehill-service` runs as a root **launchd LaunchDaemon**, installed by a `.pkg`. Not SMAppService, which expects a signed app. |
-| VPN engines | The `.pkg` bundles `openvpn` and `openconnect` (plus `libopenconnect` and its dylibs). There is no on-demand download as on Windows. |
+| Privileged part | `molehill-service` runs as a root **launchd LaunchDaemon** installed by a `.pkg`. Not SMAppService, which expects a signed app. |
+| VPN engines | The `.pkg` bundles `openvpn`, `openconnect`, `libopenconnect` and their dylibs, at pinned versions. There is no on-demand download as on Windows. |
 | Passwords | macOS Keychain (generic password items). |
-| Client certificates | `.p12`/`.pfx` file chosen in the profile editor; its passphrase is kept in the Keychain. |
+| Client certificates | `.p12`/`.pfx` file, copied into Molehill's own data folder; passphrase in the Keychain. |
 | Gatekeeper | The `.pkg` is unsigned. First install: System Settings → Privacy & Security → **Open Anyway**. Documented in the README and on the site. |
-| Architectures | Two `.pkg` files, one arm64 and one x86_64, not a universal build. Self-update picks the one matching the running architecture. |
+| Architectures | Two `.pkg` files, arm64 and x86_64, not a universal build. Self-update picks the one matching the running architecture. |
 | Test servers | The author can reach real OpenVPN, AnyConnect, Fortinet and GlobalProtect servers. |
 
 ## 3. How the code is split by platform
 
 Today 19 of the 34 `.rs` files call Win32/WinRT directly, and there is no `cfg`
-gating anywhere. The approach:
+gating anywhere.
 
-1. **Cargo:** move `windows`, `windows-service` and `tauri-winrt-notification`
-   to `[target.'cfg(windows)'.dependencies]`. Add the macOS crates under
-   `[target.'cfg(target_os = "macos")'.dependencies]`:
-   - `security-framework` (Keychain)
-   - `objc2` with `objc2-app-kit`, `objc2-foundation` and
-     `objc2-user-notifications` (AppKit glue)
-   - `nix` (signals, peer credentials)
-   - `libc` (`getifaddrs`)
-2. **Modules:** where a whole file is platform code (`job.rs`, `security.rs`,
-   `netstats.rs`, `platform.rs`, `selfupdate.rs`, `gpcallback.rs`, `secrets.rs`),
-   keep the Windows file as it is and declare it with
-   `#[cfg(windows)] #[path = "…"] mod x;`. Its macOS sibling `x_macos.rs`
-   exposes **the same function signatures**. Callers don't change.
-3. **Mixed files** (`paths.rs`, `ipc.rs`, `update.rs`, `server.rs`, `client.rs`,
-   `components.rs`, `tunnel/*.rs`, `openconnect_auth.rs`, `fortinet_sso.rs`,
-   `gp_sso.rs`, `certs.rs`, `localauth.rs`, `settings.rs`, `tray.rs`,
-   `main.rs`): only the platform-specific lines get small `cfg` blocks.
-   These include constants, binary names, `CREATE_NO_WINDOW`, and the
-   pipe/socket type. The portable logic (management-interface state machine,
-   form handling, SSO flows) is shared as it is.
-4. **Rule for reviewers:** every changed line in a Windows code path is either
-   a `cfg` attribute or a move. Section 12 gives the check.
+1. **Cargo:**
+   - Move `windows`, `windows-service` and `tauri-winrt-notification` to
+     `[target.'cfg(windows)'.dependencies]`.
+   - The macOS dependencies go under
+     `[target.'cfg(target_os = "macos")'.dependencies]`: `security-framework`,
+     `objc2` with `objc2-app-kit`, `objc2-foundation` and
+     `objc2-user-notifications`, `nix`, and `libc`.
+   - `cc` goes under the macOS `build-dependencies`.
+   - `.cargo/config.toml` already gates `+crt-static` to Windows.
+2. **Platform modules:** where a whole file is platform code (`job.rs`,
+   `security.rs`, `netstats.rs`, `platform.rs`, `selfupdate.rs`,
+   `gpcallback.rs`, `secrets.rs`):
+   - The Windows file stays byte-for-byte as it is, declared with
+     `#[cfg(windows)] #[path = "…"] mod x;`.
+   - Its macOS sibling `x_macos.rs` has **the same function signatures**, so
+     callers don't change.
+3. **Mixed files:** small `cfg` blocks cover the platform lines: constants,
+   binary names, `CREATE_NO_WINDOW`, and the pipe/socket type. Expect a
+   dead-code clean-up pass so clippy `-D warnings` passes on macOS too.
+4. **Shared-code edits.** These are not just `cfg` lines. Each is listed in the
+   PR description and covered by a test:
+
+   | Where | Change | Windows effect |
+   |---|---|---|
+   | `server.rs:265` `handle_client`, `client.rs:8,37` | generic over `AsyncRead + AsyncWrite + Unpin` instead of the concrete named-pipe types | none; the type is inferred |
+   | `tunnel/openvpn.rs:208` | script-security level and the up/down arguments come from a per-platform function | still `1`, no up/down |
+   | `tunnel/openconnect.rs:262,295` | the interface name for netstats comes from a per-platform lookup (§7) | still `Molehill-<id8>` |
+   | `localauth.rs:34` | service binary name from a constant | still `molehill-service.exe` |
+   | `openconnect_auth.rs` `Api::load` | library path and loader per platform | same DLL and flags |
+   | `openconnect_auth.rs` `on_form` | new branch for `auth_id == "openconnect_pkcs12"` ahead of `plan_form` (§8) | GnuTLS on Windows asks the same way when a store key needs a PIN. The branch only prompts and never uses the login password, which is safer. |
+   | `ocauth.rs` `AuthRequest` | `#[serde(default)] cert_password: Option<String>` | absent, so `None` |
+   | `ovpn.rs` | blocklist gains `dns-updown` and `client-crresponse` on **all** platforms | stricter; both are script hooks, so blocking them matches the stated intent |
+
+5. **Rule for reviewers:** a Windows code path changes only by a `cfg`
+   attribute, a `#[path]` move, or an edit listed in the table.
 
 ## 4. Service: root LaunchDaemon
 
 | | Windows today | macOS |
 |---|---|---|
-| Host | SCM service, LocalSystem | `/Library/LaunchDaemons/io.github.giorgobiani.molehill.service.plist`, root, `KeepAlive=true`, `RunAtLoad=true` |
-| Binary | `C:\Program Files\Molehill\molehill-service.exe` | `/Library/Application Support/Molehill/bin/molehill-service` |
-| Entry | `windows-service` dispatcher; `install`/`uninstall` subcommands | Plain `main`, which runs the server when started by launchd. `install`/`uninstall` belong to the `.pkg` scripts on macOS. `oc-auth` is the same; `oc-stop` isn't needed. |
-| IPC | Named pipe `\\.\pipe\molehill`, SDDL allows logged-on users | Unix socket `/var/run/molehill.sock`, owner `root:staff`, mode `0660` (every local login user is in `staff`) |
-| Wire protocol | JSON lines (`ipc.rs`) | **Unchanged.** `server.rs` / `client.rs` are already generic over any `AsyncRead + AsyncWrite`. |
-| Child cleanup | Job object with KILL_ON_JOB_CLOSE | Engines run in the daemon's process group, and launchd kills the whole group when the job stops (`AbandonProcessGroup` left false). On start, the daemon also kills any engine PIDs left in `run/*.pid` from a crash. |
-| Restart on failure | SCM failure actions (5 s, 30 s) | launchd `KeepAlive` plus `ThrottleInterval=5` |
-| Shutdown | waits up to 25 s for tunnels | Same logic on SIGTERM; plist `ExitTimeOut=30` |
-| Machine data | `%ProgramData%\Molehill` (icacls lock) | `/Library/Application Support/Molehill/` owned by `root:wheel`, `0755`; `run/` is `0700`. Logs in `/Library/Logs/Molehill/service.log`, `0644`, same 5 MB rotation. |
+| Host | SCM service, LocalSystem | `/Library/LaunchDaemons/io.github.giorgobiani.molehill.service.plist`, root, `KeepAlive=true`, `RunAtLoad=true`, `ThrottleInterval=5`, `ExitTimeOut=30` |
+| Binaries | `C:\Program Files\Molehill\` | `/opt/molehill/bin/molehill-service`, `/opt/molehill/engines/…`. The path has **no spaces**: OpenVPN's `--up` and openconnect's `--script` are split like shell commands. Arguments are quoted anyway, and a test covers it. |
+| Entry | `windows-service` dispatcher; `install`/`uninstall`/`oc-auth`/`oc-stop` | Plain `main`, which runs the server when started by launchd. On macOS, `install`/`uninstall` belong to the `.pkg` scripts. Kept: `oc-auth`. Added: `dns-up`/`dns-down` (§6). Not needed: `oc-stop`. |
+| IPC | Named pipe `\\.\pipe\molehill`, SDDL allows interactive users | Unix socket `/var/run/molehill.sock`, `root:staff` `0660`. Any stale socket is removed before `bind`. The client's uid is logged via `getpeereid`. |
+| Wire protocol | JSON lines (`ipc.rs`) | **Unchanged** |
+| Child cleanup | Job object with KILL_ON_JOB_CLOSE | launchd kills the daemon's process group when the job ends (`AbandonProcessGroup` false). No PID files. |
+| Crash leftovers | driver cleans up adapters | At start, the daemon removes every `State:/Network/Service/Molehill-*` key and every host route recorded in `state/routes`, then clears `state/` (§6, §7). |
+| Shutdown | waits up to 25 s | same logic on SIGTERM |
+| Machine data | `%ProgramData%\Molehill` (icacls lock) | `/Library/Application Support/Molehill/`: `root:wheel 0755`; `run/` and `state/` are `0700`. Logs in `/Library/Logs/Molehill/service.log` (`0644`, 5 MB rotation). |
 
-`security_macos.rs` does what `security.rs` does: create the directories with
-the modes above, refuse to start if any is a symlink (the equivalent of the
-reparse-point check), and log the client's uid with `getpeereid` for each
-connection.
+`security_macos.rs` creates these directories with the modes above, and the
+daemon refuses to start if any of them is a symlink, matching the reparse-point
+check on Windows.
 
-## 5. Engines and where they live
+## 5. Engines
 
-- On the CI runner, `brew install openvpn openconnect`, then copy into
-  `/Library/Application Support/Molehill/engines/`:
-  - `openvpn`
-  - `openconnect`
-  - `libopenconnect.5.dylib`
-  - all of their dylibs (GnuTLS, nettle, p11-kit, libxml2, lz4, lzo, …)
-  - Homebrew's `vpnc-script`
-- Rewrite install names with `dylibbundler` (or `install_name_tool` driven by
-  `otool -L`) so nothing points into `/opt/homebrew` or `/usr/local`. Then
-  **ad-hoc re-sign every Mach-O** (`codesign --force -s -`), because editing
-  install names breaks the linker's ad-hoc signature and arm64 refuses to run
-  unsigned code.
-- A CI check runs `otool -L` on every bundled file and fails on any path
-  outside `@loader_path`/`@rpath` or `/usr/lib` and `/System`.
-- `paths.rs` and `components.rs` on macOS point at this directory and nowhere else.
-- The Components page shows the bundled versions as installed. On macOS the
-  Install/Update buttons are hidden, and engines are updated by Molehill
-  releases. This is one Slint property, `components-installable`, set to true
-  on Windows, so the Windows UI is unchanged.
+- **Bundling, done by a separate `engines.yml` workflow** for each
+  architecture:
+  - `brew install openvpn openconnect` at pinned versions.
+  - Copy `openvpn`, `openconnect`, `libopenconnect.5.dylib`, all their dylibs
+    and Homebrew's `vpnc-script` into `engines/`.
+  - Rewrite install names to `@loader_path` and **ad-hoc re-sign every Mach-O**
+    (`codesign --force -s -`). Editing install names breaks the linker's
+    ad-hoc signature, and arm64 won't run unsigned code.
+  - An `otool -L` gate fails the build on any path outside
+    `@loader_path`/`@rpath`, `/usr/lib` and `/System`.
+  - Upload the result as a release asset, `engines-<openvpn>-<openconnect>-<arch>.tar.gz`.
+  - The Molehill release workflow downloads that pinned bundle rather than
+    rebuilding it. This guards against Homebrew dropping Intel bottles and
+    against the `macos-15-intel` runner being retired.
+- **CA trust:**
+  - Homebrew's GnuTLS has `$(brew --prefix)/etc/gnutls/cert.pem` compiled in,
+    which doesn't exist on a Mac without Homebrew.
+  - `postinstall` writes `/opt/molehill/engines/cacert.pem` from
+    `/System/Library/Keychains/SystemRootCertificates.keychain` using
+    `security find-certificate -a -p`.
+  - `oc-auth` calls `openconnect_set_system_trust(vpn, 0)` and
+    `openconnect_set_cafile(vpn, <cacert.pem>)`. The tunnel step is already
+    pinned with `--servercert`.
+  - Each update rewrites the file, so it follows OS root updates.
+- **Paths and Components page:**
+  - `paths.rs` and `components.rs` on macOS point only at `/opt/molehill/engines`.
+  - The Components page shows the bundled versions. The Install/Update buttons
+    are hidden through a Slint property `components-installable` (true on
+    Windows), and engines update with Molehill releases.
+  - `openvpn --version` is checked at start. Anything other than the pinned
+    major.minor is logged as an error, because the §6 blocklist review is per
+    version.
 - **Licensing:**
-  - OpenVPN is GPLv2 and OpenConnect is LGPLv2.1, and we redistribute their
-    binaries. The `.pkg` installs their license texts under `engines/licenses/`.
-  - The release attaches the exact source tarballs Homebrew built from
-    (`brew fetch --build-from-source` gives the URLs), which satisfies the
-    source-offer obligation.
-  - Molehill itself stays MIT.
+  - OpenVPN is GPLv2 and OpenConnect is LGPLv2.1.
+  - `/opt/molehill/engines/licenses/` holds their license texts.
+  - The release attaches the exact upstream source tarballs, Homebrew's
+    formula patches and the `vpnc-script` source.
+  - Molehill stays MIT.
 
 ## 6. OpenVPN on macOS
 
-- Device: `utun`, created by OpenVPN itself. No TAP or DCO; `ensure_adapter` is
-  `cfg(windows)`. `tunnel/openvpn.rs` adds `--dev-type tun` and no `--dev-node`.
-- **DNS:**
-  - On Windows the driver applies pushed DNS. On macOS OpenVPN applies routes
-    but not DNS, so DNS needs a script.
-  - We keep the security property that matters: **no script ever comes from a
-    profile.** `ovpn.rs` still strips `up`, `down`, `route-up` and friends.
-  - On macOS only, the service adds
-    `--script-security 2 --up <engines>/molehill-dns --down <engines>/molehill-dns --up-restart`.
-  - `molehill-dns` is a root-owned script that ships in the `.pkg`.
-  - It reads `foreign_option_*` (`dhcp-option DNS` / `DOMAIN` / `DOMAIN-SEARCH`)
-    and the newer `--dns` variables, writes a per-tunnel
-    `State:/Network/Service/Molehill-<id>/DNS` key with `scutil`, and removes
-    it on down.
-  - Split DNS (pushed domains only) uses `SupplementalMatchDomains`. Full DNS
-    sets the tunnel resolver as primary. Several tunnels at once each get
-    their own key.
-- The rest is unchanged: management interface, `>PASSWORD`, CRV1/SCRV1,
-  WEB_AUTH/OPEN_URL, and `>BYTECOUNT` for traffic stats.
+- **Device:** `utun`, created by OpenVPN.
+  - `ensure_adapter` is `cfg(windows)`, and `--dev-type tun` is passed.
+  - A profile with `dev tap` is rejected on macOS with a clear error, because
+    macOS has no TAP.
+  - `persist-tun` is stripped on macOS, because it would stop up/down from
+    running again on a reconnect and leave stale DNS behind.
+- **DNS:** OpenVPN on macOS applies routes but not DNS. The security rule still
+  holds: **no profile ever supplies or influences a script.**
+  - **Blocklist:** `ovpn.rs` also blocks `dns-updown` (OpenVPN 2.7) and
+    `client-crresponse`, on every platform. The service passes
+    `--dns-updown disable` when the bundled version understands it.
+  - **The hook is Molehill's own binary, not a shell script.** The arguments
+    are
+    `--script-security 2 --up "'/opt/molehill/bin/molehill-service' dns-up <id>" --down "… dns-down <id>" --up-restart`.
+  - **What `dns-up` reads:**
+    - It ignores the environment except `dev`, `foreign_option_*` and the 2.6+
+      `dns_*` variables, and it never reads `PATH`. Profiles can `setenv`, so
+      nothing else in the environment is trusted.
+    - Every address must parse as an IP, every domain must be plain hostname
+      characters, and there is a fixed upper limit on how many are accepted.
+      Anything else is dropped and logged.
+  - **What `dns-up` writes:**
+    - It calls `/usr/sbin/scutil` by absolute path, with commands built from
+      validated values only.
+    - Split DNS (pushed domains and no `redirect-gateway`): a
+      `State:/Network/Service/Molehill-<id>/DNS` key with
+      `SupplementalMatchDomains`.
+    - Full DNS (`redirect-gateway`, or no pushed domains): the DNS key plus
+      `State:/Network/Service/Molehill-<id>/IPv4` with `InterfaceName=<dev>`,
+      `Router` and `OverridePrimary=1`. This is the same mechanism vpnc-script
+      uses.
+    - With two full-DNS tunnels, the newest one is primary. Its `dns-down`
+      removes only its own keys, so the other tunnel's settings take over
+      again. The overlap is logged.
+  - **Cleanup:** `dns-down` removes the tunnel's keys. After a hard kill or a
+    crash, the daemon's start-up sweep (§4) removes them.
+- **Unchanged:** the management interface, `>PASSWORD`, CRV1/SCRV1,
+  WEB_AUTH/OPEN_URL, and `>BYTECOUNT`.
 
 ## 7. OpenConnect on macOS (AnyConnect, Fortinet, GlobalProtect)
 
-- **Interface name:** macOS chooses `utunN` itself, so `--interface=Molehill-xxxx`
-  is dropped on macOS. `--script` points at `molehill-vpnc`, a small
-  root-owned wrapper. It writes `$TUNDEV` to `run/<id>.dev` and then calls the
-  bundled `vpnc-script`, which already handles macOS routes and DNS via
-  `scutil`. `netstats` reads that name.
-- **Traffic counters:** `netstats_macos.rs` implements
-  `interface_bytes(name)` using `getifaddrs` and `if_data` (`ifi_ibytes`/`ifi_obytes`).
+- **Interface:** macOS picks the `utunN` name itself.
+  - On macOS `--interface` is left out, and `--script` is the bundled
+    `vpnc-script`, which handles routes and DNS via `scutil` itself.
+  - The interface name for counters comes from the address in "Connected as
+    &lt;ip&gt;" (`openconnect.rs:330`), matched against `getifaddrs`, so no
+    wrapper script is needed.
+  - The VPN gateway's host route is written to `state/routes` once the tunnel
+    is up, so the start-up sweep can remove it after a crash. vpnc-script's
+    `State:` keys go into the same sweep.
+- **Traffic counters:**
+  - `netstats_macos.rs` reads `sysctl` `NET_RT_IFLIST2` (64-bit `if_data64`).
+  - It does not use `getifaddrs`' `if_data`, which is 32-bit and wraps at 4 GiB.
 - **Stop:** `kill(pid, SIGINT)` replaces the `oc-stop` Ctrl+C helper. The hard
   kill after 10 s stays.
 - **libopenconnect:**
-  - `openconnect_auth.rs` loads `engines/libopenconnect.5.dylib`.
+  - Loaded from `engines/libopenconnect.5.dylib`.
   - **Bug to fix for Apple Silicon:** `ProgressCb` (`openconnect_auth.rs:84`)
-    declares a variadic C callback with fixed arguments. That works on x64
-    Windows, but on arm64 Apple's ABI passes variadic arguments on the stack,
-    so the log text would be garbage or the process would crash.
-  - Fix: a ~20-line C shim (built with the `cc` crate, **macOS only**) exposes
-    the real `void (*)(void*, int, const char*, ...)`, formats the message with
-    `vsnprintf`, and forwards the finished string to a non-variadic Rust
+    declares a variadic C callback with fixed arguments. On arm64, Apple
+    passes variadic arguments on the stack, so the log text would be garbage
+    or the process would crash.
+  - Fix: a ~20-line C shim, built with `cc` on macOS (both architectures, one
+    code path). It exposes the real `void (*)(void*, int, const char*, ...)`,
+    formats with `vsnprintf`, and forwards the string to a non-variadic Rust
     callback.
-  - Windows keeps its current code path untouched.
-- **GlobalProtect `clientos`:**
-  - `gp_sso.rs:96` hard-codes `Windows`. On macOS it sends `Mac` and runs
-    openconnect with `--os=mac-intel` (openconnect's name for macOS, used on
-    both architectures), so the prelogin and the tunnel report the same OS.
-  - A portal that only admits Windows clients would refuse this. That is on
-    the test matrix (§11).
+  - Windows keeps its current code.
+- **GlobalProtect OS:** on macOS, `gp_sso.rs:96-97` sends `clientos=Mac` and a
+  macOS `os-version`, matching what libopenconnect reports by default on
+  macOS (`mac-intel`). A portal that only admits Windows clients would refuse
+  this; that is on the test matrix.
 - **Fortinet SSO:** `/usr/bin/curl` instead of `System32\curl.exe`, and
-  `-o /dev/null` instead of `NUL`. The loopback port 8020 flow is unchanged.
+  `-o /dev/null` instead of `NUL`. LibreSSL curl supports
+  `--pinnedpubkey sha256//`.
 
 ## 8. Client certificates
 
-- The profile editor gets **"Certificate file…"** on macOS, using the `rfd`
-  file picker filtered to `.p12`/`.pfx`. The profile stores the path. The
-  passphrase is stored as a Keychain item `Molehill/<id>/cert`.
-- As on Windows, the **app** runs `molehill-service oc-auth` as the logged-in
-  user (`localauth.rs`), because the file lives in the user's home. The app
-  calls `openconnect_set_client_cert(path, NULL)`. GnuTLS asks for the PKCS#12
-  passphrase through the form callback, and Molehill fills it from the
-  Keychain or prompts for it. The service only starts the tunnel with the
-  resulting cookie.
-- `certs.rs` (`list-system-keys.exe`) is `cfg(windows)`.
-- **UI change:** the Windows editor keeps its certificate-store list. The file
-  picker appears only on macOS, through a Slint property.
+- **Picking the file:** on macOS the profile editor gets **"Certificate
+  file…"** (the `rfd` picker, filtered to `.p12`/`.pfx`).
+  - The chosen file is **copied** to
+    `~/Library/Application Support/Molehill/certs/<id>.p12` (`0600`), and the
+    profile stores that path.
+  - Copying avoids the macOS privacy prompt for files in Downloads and
+    Documents (TCC), which an ad-hoc build would get again after every update.
+- **The passphrase:** stored in the Keychain as service `Molehill`, account
+  `<id>/cert`.
+- **Signing in:** as on Windows, the **app** runs `molehill-service oc-auth` as
+  the user (`localauth.rs`).
+  - It calls `openconnect_set_client_cert(path, path)`, unchanged from
+    `main.rs:661`.
+  - GnuTLS asks for the PKCS#12 passphrase through the form callback, with
+    `auth_id = "openconnect_pkcs12"`.
+  - The new `on_form` branch (§3) fills it once from
+    `AuthRequest.cert_password`. Otherwise it prompts "Certificate passphrase",
+    with a "save" option.
+  - It **never** uses the login password, and it doesn't affect the
+    `password_used` logic.
+  - The service then only starts the tunnel with the cookie.
+- **Known limit, same as Windows:** the tunnel runs with the cookie only. An
+  ASA that requires the certificate on the tunnel connection itself fails on
+  both platforms. Out of scope.
+- **Windows:** `certs.rs` (`list-system-keys.exe`) is `cfg(windows)`. The
+  Windows editor keeps the certificate-store list; the file picker is
+  macOS-only through a Slint property.
 
 ## 9. App: menu bar, windows, OS integration
 
 | Feature | Windows | macOS |
 |---|---|---|
-| Tray / menu bar | `tray-icon` plus a custom Slint popup placed by `platform::place_menu` | `tray-icon` (NSStatusItem) with a **native menu** (`muda`, via `tray-icon`) that has the same items and state. Template (monochrome) icons per state, so it fits light and dark menu bars. |
-| Left click | show window | show window (`menu_on_left_click(false)`) |
-| Close window | hides | hides. The activation policy switches to Accessory (no Dock icon) while hidden, and back to Regular while shown. |
-| Single instance | named mutex + window message | LaunchServices normally gives one instance. For launches from Terminal, an `flock` on `~/Library/Application Support/Molehill/.lock`; a second instance just activates the first through `open -b`. |
-| Dark mode | `AppsUseLightTheme` registry value | `NSApp.effectiveAppearance` |
-| Title-bar colour, DPI subclassing, window icon tint | DWM / Win32 | no-op |
-| Taskbar badge | overlay icon | Dock tile badge (connected-tunnel count) via `NSDockTile` |
-| Notification ("update available") | WinRT toast | `UNUserNotificationCenter`. Ad-hoc signed bundles may be refused authorization [Guessing], so we fall back to `osascript display notification`. |
-| `globalprotectcallback:` | HKCU handler registered only during sign-in, restored afterwards | `CFBundleURLTypes` in `Info.plist`. The app installs a `kAEGetURL` Apple Event handler and forwards the callback **in-process**, with no second instance. To match Windows, Molehill makes itself the default handler only while a sign-in waits (`LSSetDefaultHandlerForURLScheme`) and restores the previous handler afterwards. That way an installed GlobalProtect.app is not hijacked. |
-| Autostart | installer checkbox, `Run` key with `--hidden` | The `.pkg` installs `/Library/LaunchAgents/io.github.giorgobiani.molehill.plist` (`--hidden`). Users can switch it off in System Settings → General → Login Items. |
-| Bundle | n/a | `/Applications/Molehill.app`, bundle id `io.github.giorgobiani.Molehill` (the owner may prefer a different id; renaming is trivial before the first release) |
+| Tray / menu bar | `tray-icon` plus a Slint popup placed by `platform::place_menu` | `tray-icon` (NSStatusItem) with a **native menu** (`muda`) that has the same items and state. Template (monochrome) icons per state. Created in a `slint::invoke_from_event_loop` closure queued before `run_event_loop_until_quit` (`main.rs:194`), so it runs on the main thread after the loop starts. |
+| Left click | show window | show window (`with_menu_on_left_click(false)`) |
+| Close window | hides | hides. Activation policy Accessory (no Dock icon) while hidden, Regular while shown. Started with `--hidden`, the app goes straight to Accessory, so there is no Dock flash at login. |
+| Re-open while hidden | second instance sends "show" (`platform.rs:237`) | A `kAEReopenApplication` Apple Event handler shows the window. It covers clicks in Finder, Spotlight and Launchpad. |
+| Quit | tray menu Quit | same menu item. Cmd+Q does the same. Tunnels keep running in the daemon, as on Windows. |
+| Single instance | named mutex | LaunchServices normally gives one instance. For launches from Terminal, an `flock` on `~/Library/Application Support/Molehill/.lock`; the second instance runs `open -b <bundle id>`, which reaches the reopen handler. |
+| Dark mode | registry | `NSApp.effectiveAppearance` |
+| Title-bar colour, DPI subclassing, window icon tint | Win32 | no-op |
+| Taskbar badge | overlay icon | Dock badge (connected count) while the Dock icon is shown. The menu-bar icon always shows the state. |
+| Notification ("update available") | WinRT toast | `UNUserNotificationCenter`; falls back to `osascript display notification` if authorization fails. |
+| `globalprotectcallback:` | HKCU handler only during sign-in, previous one restored | `CFBundleURLTypes` in `Info.plist` plus a `kAEGetURL` Apple Event handler that forwards in-process. A static plist entry lets LaunchServices pick Molehill as the default at install time. To avoid hijacking the scheme: **at startup**, if GlobalProtect.app is installed and Molehill is the default, give the scheme back (mirrors `gpcallback::unregister`, `gpcallback.rs:83`). During a sign-in, claim it with `LSSetDefaultHandlerForURLScheme`; restore it afterwards. |
+| Autostart | installer checkbox, `Run` key | `/Library/LaunchAgents/io.github.giorgobiani.molehill.plist`: `--hidden`, `KeepAlive=false`, `LimitLoadToSessionType=Aqua`, `AbandonProcessGroup=true`. Each user can switch it off in System Settings → General → Login Items. |
+| Bundle | n/a | `/Applications/Molehill.app`, bundle id `io.github.giorgobiani.Molehill`. This is a placeholder until the owner decides. |
 
 User data moves from `%APPDATA%\Molehill` to
-`~/Library/Application Support/Molehill/`, with the same files. The
-`MOLEHILL_USER_DIR` and `MOLEHILL_SERVICE_DIR` overrides keep working.
-
-`main.rs`:
-- `CoInitializeEx` and `windows_subsystem` become `cfg(windows)`.
-- On macOS the tray must be created on the main thread after the winit event
-  loop starts. This is a known `tray-icon` requirement, and it goes in Slint's
-  event-loop init hook.
+`~/Library/Application Support/Molehill/`, with the same files plus `certs/`.
+`MOLEHILL_USER_DIR` and `MOLEHILL_SERVICE_DIR` still work. `CoInitializeEx` and
+`windows_subsystem` become `cfg(windows)`.
 
 ## 10. Keychain and secrets
 
-- `secrets_macos.rs` implements the same three functions (`save_password`,
-  `load_password`, `delete_password`) using `security-framework` generic
-  passwords: service `Molehill`, account `<profile id>`.
-- **Known cost of being unsigned:**
-  - The Keychain ties each item's access to the code signature of the app
-    that created it. An ad-hoc signature changes with every build.
-  - So after each self-update, macOS asks once per saved password
-    "Molehill wants to use your confidential information…". **Always Allow**
-    fixes it until the next update.
-  - This is documented. It goes away if the project ever gets a Developer ID.
+- `secrets_macos.rs` implements the same three functions using
+  `security-framework` generic passwords:
+  - service `Molehill`
+  - account `<profile id>` for the login password
+  - account `<profile id>/cert` for the certificate passphrase
+- **Cost of being unsigned:**
+  - Keychain access is tied to the code signature, and an ad-hoc signature
+    changes with every build.
+  - After each update, macOS asks once per item ("Molehill wants to use your
+    confidential information…"). **Always Allow** clears it until the next
+    update.
+  - Documented; it goes away if the app is ever signed.
 
 ## 11. Shipping: `.pkg`, release, self-update
 
 **`.pkg`**, built with `pkgbuild` and `productbuild`, one per architecture
 (`Molehill-<v>-arm64.pkg`, `Molehill-<v>-x86_64.pkg`):
 
-- Payload:
-  - `Molehill.app` (ad-hoc signed)
-  - `bin/molehill-service`
-  - `engines/…`
-  - `molehill-dns`
-  - `molehill-vpnc`
+- **Payload:**
+  - `/Applications/Molehill.app` (ad-hoc signed)
+  - `/opt/molehill/bin/molehill-service`
+  - `/opt/molehill/engines/…`
   - the LaunchDaemon and LaunchAgent plists
-  - `uninstall.sh`
-- `preinstall`: `launchctl bootout system/io.github.giorgobiani.molehill.service`
+  - `/opt/molehill/uninstall.sh`
+- **Install rules:** `<allowed-os-versions>` is macOS 15 or later, and
+  `hostArchitectures` matches the package.
+- **`preinstall`:** `launchctl bootout system/io.github.giorgobiani.molehill.service`
   if it is loaded.
-- `postinstall`:
-  - fix owners and modes
-  - `launchctl bootstrap system …`
-  - if this is an update, relaunch the app as the console user
-    (`launchctl asuser <uid> open -a Molehill --args --hidden`)
-- The `.pkg` refuses to install on macOS < 15 (`<allowed-os-versions>`) or on
-  the wrong architecture (`hostArchitectures`).
-- Uninstall: `sudo "/Library/Application Support/Molehill/uninstall.sh"`,
-  documented in the README.
+- **`postinstall`:**
+  1. Fix owners and modes.
+  2. Write `cacert.pem` (§5).
+  3. `launchctl bootstrap system …`.
+  4. For the console user, `launchctl bootstrap gui/$uid …` and
+     `launchctl kickstart -k gui/$uid/io.github.giorgobiani.molehill`.
+  - This starts the app **as that user**. `launchctl asuser … open` would run
+    it as root.
+- **`uninstall.sh`** (sudo):
+  - `bootout` the daemon, and the agent for each logged-in `gui/<uid>`.
+  - Remove `/opt/molehill`, the app, both plists,
+    `/Library/Application Support/Molehill` and `/Library/Logs/Molehill`.
+  - Run the start-up DNS/route sweep one last time.
+  - `pkgutil --forget`.
+  - Documented in the README.
 
-**Release workflow** (`release.yml`): the existing `windows-latest` job is
-untouched. Two macOS jobs are added:
-- `macos-15` builds arm64.
-- `macos-15-intel` builds x86_64. That label exists today
-  [Likely: it's used by CPython and others, but I couldn't confirm a
-  retirement date]. If it goes away, the fallback is an x86_64 Homebrew under
-  Rosetta on the arm runner, used only to fetch the engine bottles. Rust
-  cross-compiles to x86_64 either way.
+**Release workflow:** the `windows-latest` job is untouched. A macOS job per
+architecture (`macos-15` for arm64, `macos-15-intel` for x86_64; Rust also
+cross-compiles from arm64 if needed):
 
-Each job:
-1. runs the tag/version check, tests and a release build
-2. bundles the engines
-3. builds the `.pkg`
-4. writes its `.sha256`
-5. uploads the engine source tarballs
+1. tag/version check, tests, release build
+2. fetch the pinned engine bundle (§5)
+3. build the `.pkg`
+4. write its `.sha256`
 
-The final `gh release create` step collects all assets. Fixed-name copies
-`Molehill-arm64.pkg` and `Molehill-x86_64.pkg` give permanent download links,
-as `molehill-setup.exe` does today.
+`gh release create` collects all assets: both `.pkg` files, the engine source
+tarballs, and fixed-name copies `Molehill-arm64.pkg` and `Molehill-x86_64.pkg`
+for permanent links.
 
 **Self-update:**
-- `update.rs` picks its asset by target:
-  `molehill-setup-*.exe` on Windows (unchanged), `Molehill-*-{arm64|x86_64}.pkg`
-  on macOS.
-- Download, SHA-256 check and timing (5 s, then every 12 h) are unchanged.
-  The download goes to `$TMPDIR/Molehill-update`.
+- `update.rs` chooses its asset by target: `molehill-setup-*.exe` on Windows
+  (unchanged), `Molehill-*-{arm64|x86_64}.pkg` on macOS.
+- Download, SHA-256 check and timing are unchanged; downloads go to
+  `$TMPDIR/Molehill-update`.
 - Install:
   `osascript -e 'do shell script "/usr/sbin/installer -pkg <path> -target /" with administrator privileges'`.
-  The user enters their password once, like the single UAC prompt on Windows,
-  and the app quits.
-- `postinstall` restarts the daemon (tunnels drop for a moment, as on Windows)
-  and relaunches the app.
-- `installer(8)` does not apply Gatekeeper to the `.pkg`, so updates don't
-  need "Open Anyway"; only the first install does.
+  The user enters their password once, like the single UAC prompt on Windows.
+- The child is spawned with `Command::process_group(0)`, so the app quitting
+  can't kill it. The agent also has `AbandonProcessGroup=true`.
+- The app quits, `postinstall` restarts the daemon (tunnels drop for a moment,
+  as on Windows) and kickstarts the app.
+- `installer(8)` doesn't run a Gatekeeper check, and `ureq` downloads aren't
+  quarantined, so only the first install needs "Open Anyway".
 
 ## 12. CI
 
-`ci.yml` keeps the `windows-latest` job as it is and adds a `macos-15` job:
-1. `cargo clippy --workspace --all-targets --locked -- -D warnings`
+**`ci.yml`:** the `windows-latest` job is unchanged. A new `macos-15` job runs:
+
+1. clippy `-D warnings` on all targets
 2. `cargo test --workspace --locked` (native arm64)
-3. `cargo build --release --workspace --locked --target aarch64-apple-darwin`
-4. the same build with `--target x86_64-apple-darwin` (cross-compile; nothing
-   is run)
+3. release builds for `aarch64-apple-darwin` and `x86_64-apple-darwin`
 
-`job.rs` and `gpcallback.rs` tests stay `cfg(windows)`. Their macOS siblings
-get their own unit tests where that makes sense: `netstats` against `lo0`, the
-socket permission check, and the format path of the variadic shim.
+**Tests:**
+- Windows-only tests (`job.rs`, `gpcallback.rs`) stay `cfg(windows)`.
+- New macOS unit tests:
+  - netstats against `lo0`
+  - socket mode and stale-socket handling
+  - the variadic shim's formatting
+  - `dns-up` input validation (hostile `foreign_option_*`, `PATH`, oversize
+    lists)
+  - quoting of arguments for paths with spaces
+  - `dev tap` rejection and `persist-tun` stripping
+- New tests on every platform:
+  - the `ovpn.rs` blocklist additions
+  - the `openconnect_pkcs12` form branch
+  - `AuthRequest` deserializing without `cert_password`
 
-**"Windows unchanged" check** (in the PR description and done before pushing):
+**"Windows behaviour unchanged" check**, done before pushing and stated in the
+PR:
 - Windows CI is green.
-- `git diff main -- '*.rs'` shows only `cfg` attributes, `#[path]` module
-  moves and new `*_macos.rs` files in Windows code paths.
-- `installer/molehill.iss` and the Windows steps of `release.yml` are
-  untouched.
+- Every Windows-path diff is a `cfg`, a `#[path]` move, or a row in the §3 table.
+- `installer/molehill.iss` and the Windows steps of `release.yml` are untouched.
 
 ## 13. Commit order inside the single PR
 
-Each commit builds, and passes clippy and tests, on Windows:
+Each commit builds and passes clippy and tests on Windows:
 
-1. `cfg`-gate the Windows code and target-gate the dependencies. macOS
-   compiles with stubs that return "unsupported". Add the macOS CI job.
-2. Daemon on macOS: Unix socket, launchd entry, directories and permissions,
-   process cleanup.
-3. Engines: paths, OpenVPN on `utun` plus `molehill-dns`, OpenConnect plus
-   `molehill-vpnc`, the variadic shim, netstats, and the SSO changes (curl,
-   GP `clientos`).
-4. Keychain secrets and `.p12` client certificates.
-5. App: menu bar, Dock badge, appearance, single instance, notifications,
-   GP URL handler.
-6. Packaging: `.pkg` scripts, engine bundling, `release.yml` macOS jobs,
-   macOS self-update, README/site docs.
+1. `cfg`-gate the Windows code and target-gate the dependencies. macOS compiles
+   with stubs that return "unsupported". Make `handle_client` generic. Add the
+   macOS CI job.
+2. Daemon on macOS: Unix socket, directories and permissions, `security_macos`,
+   start-up sweep.
+3. Engines: paths, CA file, OpenVPN on `utun`, `dns-up`/`dns-down`, blocklist
+   additions, OpenConnect interface lookup and stop, the variadic shim,
+   netstats, and the SSO changes (curl, GP OS).
+4. Keychain secrets and `.p12` client certificates (including the
+   `openconnect_pkcs12` branch).
+5. App: menu bar, activation policy, reopen and URL Apple Events, GP scheme
+   handling, Dock badge, appearance, single instance, notifications.
+6. Packaging: `engines.yml`, `.pkg` scripts, macOS jobs in `release.yml`, macOS
+   self-update, README/site docs.
 
 This design doc lives on `wip/macos-port` and is **not** part of the upstream
 PR. `docs/` is the project site, so the doc is dropped from the PR branch.
@@ -328,33 +401,37 @@ PR. `docs/` is the project site, so the doc is dropped from the PR branch.
 ## 14. Testing
 
 - **Automated:** the CI above.
-- **Manual, on the author's Mac, before opening the PR:**
+- **Manual, on the author's Apple Silicon Mac:**
 
-| Protocol | Cases |
-|---|---|
-| OpenVPN | password, static/dynamic challenge, WEB_AUTH SSO, full-DNS and split-DNS push |
-| AnyConnect | password form, SSO (external browser), `.p12` certificate |
-| Fortinet | password, SAML SSO (port 8020) |
-| GlobalProtect | password, SAML SSO via `globalprotectcallback:`, with and without GlobalProtect.app installed |
+  | Protocol | Cases |
+  |---|---|
+  | OpenVPN | password, static/dynamic challenge, WEB_AUTH SSO, split DNS, full DNS |
+  | AnyConnect | password form, external-browser SSO, `.p12` certificate with and without a saved passphrase |
+  | Fortinet | password, SAML SSO (port 8020) |
+  | GlobalProtect | password, SAML SSO via `globalprotectcallback:`, with and without GlobalProtect.app installed, in both install orders |
 
   Plus:
-  - two tunnels at once (DNS keys don't clobber each other)
-  - kill -9 the daemon: launchd restarts it and the engines are cleaned up
+  - two tunnels at once, including two full-DNS tunnels
+  - `kill -9` the daemon: launchd restarts it, and the sweep removes stale DNS
+    and routes
   - sleep/wake
-  - install → update from vN to vN+1 → uninstall
-  - Keychain prompt after the update
+  - install → update vN→vN+1 (Keychain prompt as expected) → uninstall
+- **Clean machine:** install on a Mac **without Homebrew** (a colleague's Mac,
+  or a macOS VM such as UTM on the author's Mac). This catches leaked Homebrew
+  paths, CA trust, and the first-launch Gatekeeper steps.
 - **Intel:** needs an Intel Mac, or at least the x86_64 `.pkg` installing and
-  connecting on one. Without one, Intel is "builds in CI, untested", and the
-  PR says so.
+  connecting on one. Without one, the PR says Intel "builds in CI, untested".
 
 ## 15. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Notification authorization refused for an ad-hoc bundle | `osascript` fallback; only one notification exists anyway. |
-| Keychain re-prompt after each update | Documented; goes away if the app is ever signed. |
-| `macos-15-intel` runner retired | Rosetta Homebrew fallback (§11). |
-| Homebrew bottle layout or deps change | The `otool -L` CI gate fails the release instead of shipping a broken `.pkg`. |
-| GP portal admits Windows clients only | Found in testing. If needed, a per-profile "report OS" override, as a follow-up. |
-| `LSSetDefaultHandlerForURLScheme` is deprecated | Still works on macOS 15/26 [Likely]. If it stops, the fallback is always owning the scheme while Molehill is installed, plus a note. |
-| Reviewer load of one large PR | Ordered commits (§13) and the "Windows unchanged" diff rule (§12). |
+| Profile sanitiser gaps become root code execution under `script-security 2` | Blocklist additions, pinned OpenVPN version with a per-version review, `--dns-updown disable`, the hook is our own binary that trusts no environment, and a version check at start. |
+| Notification authorization refused for an ad-hoc bundle | `osascript` fallback; only one notification exists. |
+| Keychain re-prompt after each update | Documented. |
+| Homebrew drops Intel bottles, or `macos-15-intel` is retired | Engine bundles are built once per version and stored as release assets (§5). |
+| Bundled GnuTLS finds no CA store | `cacert.pem` plus explicit `set_cafile` and the clean-machine test. |
+| GP portal admits Windows clients only | Found in testing; a per-profile OS override as a follow-up. |
+| `LSSetDefaultHandlerForURLScheme` is deprecated | Still works for custom schemes. If it stops, fall back to owning the scheme while installed, plus a note. |
+| macOS 15 Local Network prompt for app-side `oc-auth` to LAN servers, repeated after updates | Documented; the daemon is exempt. |
+| One large PR to review | Ordered commits (§13), the §3 edit table, and the §12 check. |
