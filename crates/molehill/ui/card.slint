@@ -130,8 +130,8 @@ export component ConnectionCard inherits Rectangle {
             VerticalLayout {
                 alignment: center;
                 HorizontalLayout {
-                    LinkButton { text: "log"; clicked => { root.show-log(); } }
-                    LinkButton { text: "edit"; clicked => { root.edit(); } }
+                    LinkButton { text: "Log"; clicked => { root.show-log(); } }
+                    LinkButton { text: "Edit"; clicked => { root.edit(); } }
                 }
             }
             VerticalLayout {
@@ -158,11 +158,11 @@ export component ConnectionCard inherits Rectangle {
             }
             if root.item.prompt-message != "": Note { text: root.item.prompt-message; error: true; }
             u := Input {
-                placeholder: "username";
+                placeholder: "Username";
                 text <=> root.user;
             }
             p := Input {
-                placeholder: "password";
+                placeholder: "Password";
                 input-type: password;
                 text <=> root.secret;
                 accepted => { root.send-credentials(); }
@@ -171,11 +171,11 @@ export component ConnectionCard inherits Rectangle {
                 spacing: 6px;
                 VerticalLayout {
                     alignment: center;
-                    Check { text: "remember"; checked <=> root.remember; }
+                    Check { text: "Remember"; checked <=> root.remember; }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                Btn { text: "cancel"; clicked => { root.cancel-prompt(); } }
-                Btn { text: "sign in"; kind: "primary"; clicked => { root.send-credentials(); } }
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Sign in"; kind: "primary"; clicked => { root.send-credentials(); } }
             }
         }
 
@@ -191,8 +191,8 @@ export component ConnectionCard inherits Rectangle {
             HorizontalLayout {
                 alignment: end;
                 spacing: 6px;
-                Btn { text: "cancel"; clicked => { root.cancel-prompt(); } }
-                Btn { text: "continue"; kind: "primary"; clicked => { root.send-text(); } }
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Continue"; kind: "primary"; clicked => { root.send-text(); } }
             }
         }
 
@@ -202,8 +202,8 @@ export component ConnectionCard inherits Rectangle {
             HorizontalLayout {
                 alignment: end;
                 spacing: 6px;
-                Btn { text: "cancel"; clicked => { root.cancel-prompt(); } }
-                Btn { text: "open sign-in page"; kind: "primary"; clicked => { root.open-url(root.item.prompt-url); } }
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Open sign-in page"; kind: "primary"; clicked => { root.open-url(root.item.prompt-url); } }
             }
         }
 
@@ -226,7 +226,7 @@ export component ConnectionCard inherits Rectangle {
                 if f.kind != "select": Input {
                     text: f.value;
                     input-type: f.kind == "password" ? InputType.password : InputType.text;
-                    placeholder: f.prefilled ? "saved · empty uses it" : "";
+                    placeholder: f.prefilled ? "Saved · leave empty to use it" : "";
                     edited(t) => { root.field-edited(i, t); }
                     accepted => { root.submit-form(); }
                     init => {
@@ -237,9 +237,9 @@ export component ConnectionCard inherits Rectangle {
             HorizontalLayout {
                 alignment: end;
                 spacing: 6px;
-                Btn { text: "cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
                 Btn {
-                    text: root.item.prompt-fields.length == 0 ? "continue" : "sign in";
+                    text: root.item.prompt-fields.length == 0 ? "Continue" : "Sign in";
                     kind: "primary";
                     clicked => { root.submit-form(); }
                 }
@@ -267,8 +267,8 @@ export component ConnectionCard inherits Rectangle {
             HorizontalLayout {
                 alignment: end;
                 spacing: 6px;
-                Btn { text: "cancel"; clicked => { root.cancel-prompt(); } }
-                Btn { text: "trust and connect"; kind: "primary"; clicked => { root.submit-text("trust"); } }
+                Btn { text: "Cancel"; clicked => { root.cancel-prompt(); } }
+                Btn { text: "Trust and connect"; kind: "primary"; clicked => { root.submit-text("trust"); } }
             }
         }
     }

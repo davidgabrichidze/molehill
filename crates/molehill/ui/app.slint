@@ -200,7 +200,7 @@ export component AppWindow inherits Window {
                     }
                     if root.components-attention: VerticalLayout {
                         alignment: center;
-                        Btn { text: "open"; clicked => { root.open-components(); } }
+                        Btn { text: "Open"; clicked => { root.open-components(); } }
                     }
                 }
             }
@@ -219,13 +219,13 @@ export component AppWindow inherits Window {
                     }
                 }
                 Text {
-                    text: "no tunnels dug yet";
+                    text: "No tunnels dug yet";
                     font-size: 13px;
                     color: Theme.text;
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: "openvpn · cisco anyconnect · fortinet · globalprotect";
+                    text: "OpenVPN · Cisco AnyConnect · Fortinet · GlobalProtect";
                     font-size: 10px;
                     color: Theme.muted;
                     horizontal-alignment: center;
@@ -233,7 +233,7 @@ export component AppWindow inherits Window {
                 }
                 HorizontalLayout {
                     alignment: center;
-                    Btn { text: "add your first vpn"; kind: "primary"; clicked => { root.new-connection(); } }
+                    Btn { text: "Add your first VPN"; kind: "primary"; clicked => { root.new-connection(); } }
                 }
             }
 
@@ -259,13 +259,13 @@ export component AppWindow inherits Window {
 
             HorizontalLayout {
                 spacing: 2px;
-                LinkButton { text: "+ new"; clicked => { root.new-connection(); } }
-                LinkButton { text: "components"; dot: root.components-attention; clicked => { root.open-components(); } }
+                LinkButton { text: "+ New"; clicked => { root.new-connection(); } }
+                LinkButton { text: "Components"; dot: root.components-attention; clicked => { root.open-components(); } }
                 Rectangle { horizontal-stretch: 1; }
                 VerticalLayout {
                     alignment: center;
                     Text {
-                        text: root.service-online ? "● service" : "○ service offline";
+                        text: root.service-online ? "● Service" : "○ Service offline";
                         font-size: 10px;
                         color: root.service-online ? Theme.faint : Theme.red;
                     }
@@ -277,7 +277,7 @@ export component AppWindow inherits Window {
         if root.page == Page.editor: VerticalLayout {
             spacing: 10px;
             Header {
-                title: root.form-is-new ? "new connection" : "edit connection";
+                title: root.form-is-new ? "New connection" : "Edit connection";
                 back => { root.cancel-editor(); }
             }
 
@@ -288,14 +288,14 @@ export component AppWindow inherits Window {
                     padding-bottom: 4px;
 
                     Field {
-                        label: "name";
-                        Input { placeholder: "e.g. work vpn"; text <=> root.form-name; }
+                        label: "Name";
+                        Input { placeholder: "e.g. Work VPN"; text <=> root.form-name; }
                     }
 
                     // Like the Omarchy plugin: the server comes right after the
                     // name, then the protocol as a dropdown that shapes the rest.
                     if root.form-protocol != 0: Field {
-                        label: root.form-protocol == 3 ? "portal" : root.form-protocol == 2 ? "gateway (host or host:port)" : "gateway";
+                        label: root.form-protocol == 3 ? "Portal" : root.form-protocol == 2 ? "Gateway (host or host:port)" : "Gateway";
                         Input {
                             placeholder: root.form-protocol == 2 ? "vpn.example.com:10443" : root.form-protocol == 1 ? "vpn.example.com or vpn.example.com/group" : "vpn.example.com";
                             text <=> root.form-gateway;
@@ -303,7 +303,7 @@ export component AppWindow inherits Window {
                     }
 
                     Field {
-                        label: "protocol";
+                        label: "Protocol";
                         Select {
                             enabled: root.form-is-new;
                             // Display order (Cisco first, as in the plugin) → protocol index.
@@ -317,7 +317,7 @@ export component AppWindow inherits Window {
                     }
 
                     if root.form-protocol == 0: Field {
-                        label: "set up from";
+                        label: "Set up from";
                         Select {
                             model: ["A .ovpn file", "OpenVPN Access Server (fetch the profile)", "Manual (address, CA, keys)"];
                             current-index: root.form-source;
@@ -329,7 +329,7 @@ export component AppWindow inherits Window {
                     }
 
                     if root.form-protocol >= 2: Field {
-                        label: "sign-in";
+                        label: "Sign-in";
                         Select {
                             model: ["Username & password (+ code / token)", "Browser SSO (Microsoft, Okta, Google…)"];
                             current-index: root.form-sso ? 1 : 0;
@@ -346,23 +346,23 @@ export component AppWindow inherits Window {
 
                     // .ovpn file
                     if root.form-protocol == 0 && root.form-source == 0: Field {
-                        label: "profile (.ovpn)";
+                        label: "Profile (.ovpn)";
                         HorizontalLayout {
                             spacing: 6px;
                             Input {
-                                placeholder: "the file your provider or IT gave you";
+                                placeholder: "The file your provider or IT gave you";
                                 text: root.form-config;
                                 read-only: true;
                                 horizontal-stretch: 1;
                             }
-                            Btn { text: "browse"; clicked => { root.browse-config(); } }
+                            Btn { text: "Browse"; clicked => { root.browse-config(); } }
                         }
                         if root.form-config-info != "": Hint { text: root.form-config-info; }
                     }
 
                     // OpenVPN Access Server
                     if root.form-protocol == 0 && root.form-source == 1: Field {
-                        label: "server address";
+                        label: "Server address";
                         HorizontalLayout {
                             spacing: 6px;
                             Input {
@@ -371,7 +371,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                             }
                             Btn {
-                                text: root.form-fetch-busy ? "fetching…" : "fetch";
+                                text: root.form-fetch-busy ? "Fetching…" : "Fetch";
                                 enabled: !root.form-fetch-busy;
                                 clicked => { root.fetch-profile(); }
                             }
@@ -388,7 +388,7 @@ export component AppWindow inherits Window {
                                 Toggle { checked: root.form-insecure; toggled => { root.form-insecure = !root.form-insecure; } }
                             }
                             Text {
-                                text: "accept a self-signed web certificate";
+                                text: "Accept a self-signed web certificate";
                                 color: Theme.text;
                                 font-size: 11px;
                                 vertical-alignment: center;
@@ -404,18 +404,18 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             spacing: 6px;
                             Field {
-                                label: "server address";
+                                label: "Server address";
                                 horizontal-stretch: 1;
                                 Input { placeholder: "vpn.example.com"; text <=> root.form-host; }
                             }
                             Field {
-                                label: "port";
+                                label: "Port";
                                 horizontal-stretch: 0;
                                 Input { width: 72px; placeholder: "1194"; text <=> root.form-port; }
                             }
                         }
                         Field {
-                            label: "transport";
+                            label: "Transport";
                             Select {
                                 model: ["UDP", "TCP"];
                                 current-index: root.form-tcp ? 1 : 0;
@@ -425,8 +425,8 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             spacing: 5px;
                             HorizontalLayout {
-                                FieldLabel { text: "ca certificate"; vertical-alignment: center; horizontal-stretch: 1; }
-                                LinkButton { text: "load file…"; clicked => { root.browse-ca(); } }
+                                FieldLabel { text: "CA certificate"; vertical-alignment: center; horizontal-stretch: 1; }
+                                LinkButton { text: "Load file…"; clicked => { root.browse-ca(); } }
                             }
                             TextArea {
                                 height: 76px;
@@ -437,8 +437,8 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             spacing: 5px;
                             HorizontalLayout {
-                                FieldLabel { text: "tls key, if the server uses one"; vertical-alignment: center; horizontal-stretch: 1; }
-                                if root.form-tls-mode != 0: LinkButton { text: "load file…"; clicked => { root.browse-tls-key(); } }
+                                FieldLabel { text: "TLS key, if the server uses one"; vertical-alignment: center; horizontal-stretch: 1; }
+                                if root.form-tls-mode != 0: LinkButton { text: "Load file…"; clicked => { root.browse-tls-key(); } }
                             }
                             Select {
                                 model: ["None", "tls-auth", "tls-crypt"];
@@ -452,7 +452,7 @@ export component AppWindow inherits Window {
                             }
                         }
                         Field {
-                            label: "extra directives (optional)";
+                            label: "Extra directives (optional)";
                             TextArea {
                                 height: 56px;
                                 placeholder: "cipher AES-256-GCM";
@@ -462,9 +462,9 @@ export component AppWindow inherits Window {
                     }
 
                     if root.form-protocol != 0: Field {
-                        label: root.form-protocol == 2 ? "realm (optional)" : root.form-protocol == 3 ? "gateway (optional)" : "group (optional)";
+                        label: root.form-protocol == 2 ? "Realm (optional)" : root.form-protocol == 3 ? "Gateway (optional)" : "Group (optional)";
                         Input {
-                            placeholder: root.form-protocol == 2 ? "only if your IT gave you one" : "asked at sign-in, then remembered";
+                            placeholder: root.form-protocol == 2 ? "Only if your IT gave you one" : "Asked at sign-in, then remembered";
                             text <=> root.form-group;
                         }
                     }
@@ -472,15 +472,15 @@ export component AppWindow inherits Window {
                     if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {
                         spacing: 6px;
                         Field {
-                            label: "username";
+                            label: "Username";
                             horizontal-stretch: 1;
-                            Input { placeholder: "optional"; text <=> root.form-username; }
+                            Input { placeholder: "Optional"; text <=> root.form-username; }
                         }
                         Field {
-                            label: "password";
+                            label: "Password";
                             horizontal-stretch: 1;
                             Input {
-                                placeholder: root.form-has-saved-password ? "saved · empty keeps it" : "optional";
+                                placeholder: root.form-has-saved-password ? "Saved · leave empty to keep it" : "Optional";
                                 input-type: password;
                                 text <=> root.form-password;
                             }
@@ -496,7 +496,7 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             alignment: center;
                             horizontal-stretch: 1;
-                            Text { text: "remember password"; color: Theme.text; font-size: 11px; }
+                            Text { text: "Remember password"; color: Theme.text; font-size: 11px; }
                             Hint { text: "In Windows Credential Manager. Otherwise asked each time."; }
                         }
                     }
@@ -512,11 +512,11 @@ export component AppWindow inherits Window {
 
             HorizontalLayout {
                 spacing: 6px;
-                if !root.form-is-new: Btn { text: "delete"; kind: "danger"; clicked => { root.delete-profile(); } }
+                if !root.form-is-new: Btn { text: "Delete"; kind: "danger"; clicked => { root.delete-profile(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Btn { text: "cancel"; clicked => { root.cancel-editor(); } }
+                Btn { text: "Cancel"; clicked => { root.cancel-editor(); } }
                 Btn {
-                    text: root.form-fetch-busy ? "fetching…" : "save";
+                    text: root.form-fetch-busy ? "Fetching…" : "Save";
                     kind: "primary";
                     enabled: !root.form-fetch-busy;
                     clicked => { root.save-profile(); }
@@ -528,8 +528,8 @@ export component AppWindow inherits Window {
         if root.page == Page.components: VerticalLayout {
             spacing: 10px;
             Header {
-                title: "components";
-                subtitle: "the engines molehill drives, kept up to date";
+                title: "Components";
+                subtitle: "The engines Molehill drives, kept up to date";
                 back => { root.page = Page.list; }
             }
 
@@ -554,8 +554,8 @@ export component AppWindow inherits Window {
                                 }
                                 VerticalLayout {
                                     alignment: center;
-                                    if c.action == "install": Btn { text: c.busy ? "installing…" : "install"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
-                                    if c.action == "update": Btn { text: c.busy ? "updating…" : "update"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
+                                    if c.action == "install": Btn { text: c.busy ? "Installing…" : "Install"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
+                                    if c.action == "update": Btn { text: c.busy ? "Updating…" : "Update"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
                                 }
                             }
                             Text {
@@ -581,7 +581,7 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                     Text { text: root.components-status; font-size: 10px; color: Theme.muted; wrap: word-wrap; }
                 }
-                Btn { text: "check for updates"; enabled: root.service-online; clicked => { root.check-updates(); } }
+                Btn { text: "Check for updates"; enabled: root.service-online; clicked => { root.check-updates(); } }
             }
         }
 
@@ -590,7 +590,7 @@ export component AppWindow inherits Window {
             spacing: 10px;
             Header {
                 title: root.log-title;
-                subtitle: "vpn engine output from this session";
+                subtitle: "VPN engine output from this session";
                 back => { root.page = Page.list; }
             }
             TextArea {

@@ -134,23 +134,23 @@ export component TrayMenu inherits Window {
                 for t in root.tunnels: MenuRow {
                     text: t.name;
                     dot: t.state == "on" ? Theme.green : t.state == "busy" ? Theme.yellow : t.state == "error" ? Theme.red : Theme.faint;
-                    trailing: t.state == "on" ? "on" : t.state == "busy" ? "…" : "off";
+                    trailing: t.state == "on" ? "On" : t.state == "busy" ? "…" : "Off";
                     clicked => { root.toggle(t.id); }
                 }
-                if root.tunnels.length == 0: MenuRow { text: "no connections yet"; enabled: false; }
+                if root.tunnels.length == 0: MenuRow { text: "No connections yet"; enabled: false; }
 
                 Separator { }
 
-                MenuRow { text: "open molehill"; clicked => { root.open-app(); } }
+                MenuRow { text: "Open Molehill"; clicked => { root.open-app(); } }
                 MenuRow {
-                    text: "disconnect all";
+                    text: "Disconnect all";
                     enabled: root.any-on || root.any-busy;
                     clicked => { root.disconnect-all(); }
                 }
 
                 Separator { }
 
-                MenuRow { text: "quit"; danger: true; clicked => { root.quit(); } }
+                MenuRow { text: "Quit"; danger: true; clicked => { root.quit(); } }
             }
         }
     }
