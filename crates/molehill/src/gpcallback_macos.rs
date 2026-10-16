@@ -21,7 +21,7 @@ pub fn forward(url: &str) {
     ]
     .concat();
     for _ in 0..20 {
-        if let Ok(mut socket) = std::os::unix::net::UnixStream::connect(ipc::SOCKET_PATH) {
+        if let Ok(mut socket) = std::os::unix::net::UnixStream::connect(ipc::socket_path()) {
             let _ = socket.write_all(lines.as_bytes());
             let _ = socket.flush();
             // Let the service read it before the socket closes.

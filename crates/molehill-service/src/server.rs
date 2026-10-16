@@ -215,6 +215,13 @@ pub async fn run(shutdown: Arc<Notify>) -> Result<()> {
             let _ = std::fs::remove_file(e.path());
         }
     }
+    // DNS settings and routes that a crashed run couldn't take down.
+    #[cfg(target_os = "macos")]
+    {
+        let state_dir = paths::service_dir().join("state");
+        security::private_dir(&state_dir)?;
+        tokio::task::spawn_blocking(move || crate::sweep::run(&state_dir)).await?;
+    }
 
     let (events, _) = broadcast::channel(256);
     let mgr = Arc::new(Manager { events, inner: Mutex::new(Inner::default()) });
@@ -264,21 +271,10 @@ async fn accept(mgr: &Arc<Manager>, shutdown: &Notify) -> Result<()> {
 /// as on Windows: the socket is `root:staff`, mode 0660.
 #[cfg(target_os = "macos")]
 async fn accept(mgr: &Arc<Manager>, shutdown: &Notify) -> Result<()> {
-    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
-
-    let path = std::path::Path::new(ipc::SOCKET_PATH);
-    // A socket left by a crash would make bind fail; anything else at that
-    // path is not ours to delete.
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        if !meta.file_type().is_socket() {
-            anyhow::bail!("{} exists and is not a socket", path.display());
-        }
-        std::fs::remove_file(path)?;
-    }
-    let listener = tokio::net::UnixListener::bind(path)?;
-    const STAFF_GID: u32 = 20;
-    std::os::unix::fs::chown(path, Some(0), Some(STAFF_GID))?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))?;
+    let path = ipc::socket_path();
+    let listener = security::bind_socket(&path)?;
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::UnixListener::from_std(listener)?;
     loop {
         tokio::select! {
             res = listener.accept() => match res {
@@ -294,7 +290,7 @@ async fn accept(mgr: &Arc<Manager>, shutdown: &Notify) -> Result<()> {
             _ = shutdown.notified() => break,
         }
     }
-    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(&path);
     Ok(())
 }
 

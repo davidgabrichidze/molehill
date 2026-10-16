@@ -188,6 +188,27 @@ Start-Process target\debug\molehill-service.exe run
 target\debug\molehill.exe
 ```
 
+On macOS, the service runs as a root launchd daemon. To use your build:
+
+```sh
+cargo build
+sudo mkdir -p /opt/molehill/bin /Library/Logs/Molehill
+sudo cp target/debug/molehill-service /opt/molehill/bin/
+sudo cp packaging/macos/io.github.giorgobiani.molehill.service.plist /Library/LaunchDaemons/
+sudo launchctl bootstrap system /Library/LaunchDaemons/io.github.giorgobiani.molehill.service.plist
+# after each rebuild:
+sudo cp target/debug/molehill-service /opt/molehill/bin/ && sudo launchctl kickstart -k system/io.github.giorgobiani.molehill.service
+target/debug/molehill
+```
+
+Or, without root (no tunnels), in the foreground against scratch directories:
+
+```sh
+export MOLEHILL_SERVICE_DIR=/tmp/molehill-svc MOLEHILL_USER_DIR=/tmp/molehill-user MOLEHILL_SOCKET=/tmp/molehill.sock
+target/debug/molehill-service run &
+target/debug/molehill
+```
+
 ```powershell
 cargo test                                            # sanitizer, importer, sign-in logic, SSO parsers
 cargo run -p molehill --example snapshot -- snapshots # headless screenshots with demo data

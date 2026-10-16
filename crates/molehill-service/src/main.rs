@@ -35,6 +35,8 @@ mod security;
 #[path = "security_macos.rs"]
 mod security;
 mod server;
+#[cfg(target_os = "macos")]
+mod sweep;
 mod tunnel;
 
 #[cfg(windows)]
@@ -128,7 +130,14 @@ fn init_logging(console: bool) {
         builder.with_writer(std::io::stderr).init();
         return;
     }
+    #[cfg(windows)]
     let dir = paths::service_dir().join("logs");
+    // Where Console.app looks; the dev override keeps logs next to its data.
+    #[cfg(target_os = "macos")]
+    let dir = match std::env::var_os("MOLEHILL_SERVICE_DIR") {
+        Some(_) => paths::service_dir().join("logs"),
+        None => std::path::PathBuf::from("/Library/Logs/Molehill"),
+    };
     if security::readable_dir(&dir).is_err() {
         builder.with_writer(std::io::sink).init();
         return;

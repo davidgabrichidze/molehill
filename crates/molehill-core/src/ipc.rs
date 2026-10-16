@@ -12,6 +12,13 @@ pub const PIPE_NAME: &str = r"\\.\pipe\molehill";
 #[cfg(target_os = "macos")]
 pub const SOCKET_PATH: &str = "/var/run/molehill.sock";
 
+/// The socket to use: `MOLEHILL_SOCKET` overrides it, for running
+/// `molehill-service run` without root during development.
+#[cfg(target_os = "macos")]
+pub fn socket_path() -> std::path::PathBuf {
+    std::env::var_os("MOLEHILL_SOCKET").map(Into::into).unwrap_or_else(|| SOCKET_PATH.into())
+}
+
 /// App → service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

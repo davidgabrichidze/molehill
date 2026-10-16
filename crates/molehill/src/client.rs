@@ -38,7 +38,7 @@ pub fn start(on_event: impl Fn(ClientEvent) + Send + 'static) -> Client {
                     #[cfg(windows)]
                     let opened = ClientOptions::new().open(ipc::PIPE_NAME);
                     #[cfg(target_os = "macos")]
-                    let opened = tokio::net::UnixStream::connect(ipc::SOCKET_PATH).await;
+                    let opened = tokio::net::UnixStream::connect(ipc::socket_path()).await;
                     let pipe = match opened {
                         Ok(p) => p,
                         Err(_) => {
