@@ -319,8 +319,9 @@ impl Session {
     }
 
     fn on_output(&mut self, line: &str) {
-        // "Connected as 10.1.2.3, using SSL, with DTLS in progress"
-        if let Some(rest) = line.strip_prefix("Connected as ") {
+        // Cisco / GlobalProtect: "Connected as 10.1.2.3, using SSL, with DTLS in progress"
+        // Fortinet: "Configured as 10.1.2.3, with SSL connected and DTLS disabled"
+        if let Some(rest) = line.strip_prefix("Connected as ").or_else(|| line.strip_prefix("Configured as ")) {
             let ip = rest.split([',', ' ']).next().unwrap_or("").to_string();
             self.local_ip = (!ip.is_empty()).then_some(ip.clone());
             if self.since.is_none() {
