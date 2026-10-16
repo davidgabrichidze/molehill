@@ -1,4 +1,3 @@
-import { LineEdit, CheckBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 export component Btn inherits Rectangle {
@@ -9,25 +8,27 @@ export component Btn inherits Rectangle {
     callback clicked();
     horizontal-stretch: 0;
 
-    height: 32px;
-    border-radius: 4px;
-    background: !root.enabled ? Theme.surface
+    height: 28px;
+    border-radius: Theme.radius;
+    background: !root.enabled ? transparent
         : root.kind == "primary" ? (ta.has-hover ? Theme.accent.brighter(0.12) : Theme.accent)
-        : root.kind == "danger" ? (ta.has-hover ? Theme.red.transparentize(0.8) : transparent)
-        : (ta.has-hover ? Theme.surface-hover : Theme.surface);
-    border-width: root.kind == "primary" ? 0px : 1px;
-    border-color: root.kind == "danger" ? Theme.red.transparentize(0.5) : Theme.border;
-    opacity: root.enabled ? 1 : 0.5;
-    animate background { duration: 120ms; }
+        : root.kind == "danger" ? (ta.has-hover ? Theme.red.transparentize(0.85) : transparent)
+        : (ta.has-hover ? Theme.surface-hover : transparent);
+    border-width: root.kind == "primary" && root.enabled ? 0px : 1px;
+    border-color: root.kind == "danger" ? Theme.red.transparentize(0.4)
+        : ta.has-hover && root.enabled ? Theme.muted : Theme.border;
+    opacity: root.enabled ? 1 : 0.45;
+    animate background { duration: 100ms; }
 
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: 12px;
+        padding-right: 12px;
         Text {
             text: root.text;
-            color: root.kind == "primary" ? Theme.bg : root.kind == "danger" ? Theme.red : Theme.text;
-            font-size: 13px;
-            font-weight: root.kind == "primary" ? 600 : 400;
+            color: root.kind == "primary" && root.enabled ? Theme.bg : root.kind == "danger" ? Theme.red : Theme.text;
+            font-family: Theme.mono;
+            font-size: 12px;
+            font-weight: root.kind == "primary" ? 700 : 400;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -46,14 +47,13 @@ export component LinkButton inherits Rectangle {
     in property <bool> dot;
     callback clicked();
     horizontal-stretch: 0;
-    border-radius: 4px;
     background: ta.has-hover ? Theme.surface-hover : transparent;
 
     HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        padding-top: 3px;
-        padding-bottom: 3px;
+        padding-left: 5px;
+        padding-right: 5px;
+        padding-top: 2px;
+        padding-bottom: 2px;
         spacing: 5px;
         Text {
             text: root.text;
@@ -65,9 +65,8 @@ export component LinkButton inherits Rectangle {
         if root.dot: VerticalLayout {
             alignment: center;
             Rectangle {
-                width: 6px;
-                height: 6px;
-                border-radius: 3px;
+                width: 5px;
+                height: 5px;
                 background: Theme.yellow;
             }
         }
@@ -85,24 +84,23 @@ export component Toggle inherits Rectangle {
     in property <bool> enabled: true;
     callback toggled();
 
-    width: 40px;
-    height: 22px;
-    border-radius: 4px;
-    background: root.busy ? Theme.yellow.transparentize(0.75) : root.checked ? Theme.accent : transparent;
+    width: 34px;
+    height: 18px;
+    border-radius: Theme.radius;
+    background: root.busy ? Theme.yellow.transparentize(0.8) : root.checked ? Theme.accent : transparent;
     border-width: root.checked && !root.busy ? 0px : 1px;
     border-color: root.busy ? Theme.yellow : ta.has-hover ? Theme.text : Theme.muted;
     opacity: root.enabled ? 1 : 0.35;
     animate background { duration: 150ms; }
 
     Rectangle {
-        width: 14px;
-        height: 14px;
-        border-radius: 2px;
+        width: 10px;
+        height: 10px;
         y: (parent.height - self.height) / 2;
         x: root.checked ? parent.width - self.width - 4px : 4px;
         background: root.busy ? Theme.yellow : root.checked ? Theme.bg : (ta.has-hover ? Theme.text : Theme.muted);
         opacity: root.busy ? 0.55 + 0.45 * Math.sin(animation-tick() / 3ms * 1deg) : 1;
-        animate x { duration: 160ms; easing: ease-out; }
+        animate x { duration: 140ms; easing: ease-out; }
     }
 
     ta := TouchArea {
@@ -115,14 +113,14 @@ export component Toggle inherits Rectangle {
 export component Badge inherits Rectangle {
     in property <string> text;
     in property <color> tint: Theme.accent;
-    width: 52px;
-    height: 22px;
-    border-radius: 2px;
-    background: root.tint.transparentize(0.86);
+    width: 46px;
+    height: 18px;
+    border-width: 1px;
+    border-color: root.tint.transparentize(0.55);
     Text {
         text: root.text;
         font-family: Theme.mono;
-        font-size: 10px;
+        font-size: 9px;
         font-weight: 700;
         color: root.tint;
         horizontal-alignment: center;
@@ -131,7 +129,8 @@ export component Badge inherits Rectangle {
 }
 
 export component FieldLabel inherits Text {
-    font-size: 12px;
+    font-family: Theme.mono;
+    font-size: 11px;
     color: Theme.muted;
 }
 
@@ -142,20 +141,21 @@ export component Chip inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
-    height: 34px;
-    border-radius: 4px;
-    background: root.selected ? Theme.accent.transparentize(0.85) : ta.has-hover && root.enabled ? Theme.surface-hover : Theme.surface;
+    height: 28px;
+    border-radius: Theme.radius;
+    background: root.selected ? Theme.accent.transparentize(0.88) : ta.has-hover && root.enabled ? Theme.surface-hover : transparent;
     border-width: 1px;
     border-color: root.selected ? Theme.accent : Theme.border;
-    opacity: root.enabled ? 1 : 0.55;
+    opacity: root.enabled || root.selected ? 1 : 0.4;
 
     VerticalLayout {
         alignment: center;
-        padding-left: 6px;
-        padding-right: 6px;
+        padding-left: 4px;
+        padding-right: 4px;
         Text {
             text: root.text;
-            font-size: 12px;
+            font-family: Theme.mono;
+            font-size: 11px;
             color: root.selected ? Theme.accent : Theme.text;
             horizontal-alignment: center;
             overflow: elide;
@@ -163,7 +163,7 @@ export component Chip inherits Rectangle {
         if root.note != "": Text {
             text: root.note;
             font-family: Theme.mono;
-            font-size: 9px;
+            font-size: 8px;
             color: Theme.muted;
             horizontal-alignment: center;
         }
@@ -173,6 +173,268 @@ export component Chip inherits Rectangle {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
         clicked => { root.clicked(); }
+    }
+}
+
+/// Single-line text box. Placeholder in its own dim colour; the text slides
+/// to keep the cursor in view, like Slint's own LineEdit.
+export component Input inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> ti.text;
+    in property <InputType> input-type: InputType.text;
+    in property <bool> read-only <=> ti.read-only;
+    in property <length> font-size: 12px;
+    out property <bool> has-focus: ti.has-focus;
+    callback accepted();
+    callback edited(string);
+
+    height: 28px;
+    min-width: 40px;
+    background: root.read-only ? transparent : Theme.field;
+    border-width: 1px;
+    border-color: ti.has-focus ? Theme.accent : Theme.border;
+    border-radius: Theme.radius;
+    forward-focus: ti;
+
+    Rectangle {
+        x: 8px;
+        width: parent.width - 16px;
+        clip: true;
+        if root.text == "": Text {
+            width: 100%;
+            height: 100%;
+            text: root.placeholder;
+            color: Theme.placeholder;
+            font-family: Theme.mono;
+            font-size: root.font-size;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        ti := TextInput {
+            property <length> computed-x;
+            x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.computed-x));
+            width: max(parent.width - self.text-cursor-width, self.preferred-width);
+            height: 100%;
+            vertical-alignment: center;
+            single-line: true;
+            input-type: root.input-type;
+            color: root.read-only ? Theme.muted : Theme.text;
+            font-family: Theme.mono;
+            font-size: root.font-size;
+            selection-background-color: Theme.accent.transparentize(0.55);
+            selection-foreground-color: Theme.text;
+            cursor-position-changed(p) => {
+                if p.x + self.computed-x < 0px {
+                    self.computed-x = - p.x;
+                } else if p.x + self.computed-x > parent.width - self.text-cursor-width {
+                    self.computed-x = parent.width - p.x - self.text-cursor-width;
+                }
+            }
+            accepted => { root.accepted(); }
+            edited => { root.edited(self.text); }
+        }
+    }
+}
+
+/// Multi-line text box (certificates, keys, the log). Scrolls with the
+/// wheel and follows the cursor.
+export component TextArea inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> ti.text;
+    in property <bool> read-only <=> ti.read-only;
+    in property <bool> wrap: true;
+    in property <length> font-size: 11px;
+
+    background: Theme.field;
+    border-width: 1px;
+    border-color: ti.has-focus ? Theme.accent : Theme.border;
+    border-radius: Theme.radius;
+    forward-focus: ti;
+
+    if root.text == "": Text {
+        x: 8px;
+        y: 6px;
+        width: parent.width - 16px;
+        text: root.placeholder;
+        color: Theme.placeholder;
+        font-family: Theme.mono;
+        font-size: root.font-size;
+        overflow: elide;
+    }
+    f := Flickable {
+        x: 8px;
+        y: 6px;
+        width: parent.width - 16px;
+        height: parent.height - 12px;
+        content-width: root.wrap ? self.width : max(self.width, ti.preferred-width + 8px);
+        content-height: max(self.height, ti.preferred-height);
+        ti := TextInput {
+            width: f.content-width;
+            single-line: false;
+            wrap: root.wrap ? TextWrap.word-wrap : TextWrap.no-wrap;
+            color: Theme.text;
+            font-family: Theme.mono;
+            font-size: root.font-size;
+            selection-background-color: Theme.accent.transparentize(0.55);
+            selection-foreground-color: Theme.text;
+            cursor-position-changed(p) => {
+                if p.y + f.viewport-y < 0px {
+                    f.viewport-y = - p.y;
+                } else if p.y + f.viewport-y > f.height - root.font-size * 1.6 {
+                    f.viewport-y = f.height - root.font-size * 1.6 - p.y;
+                }
+            }
+        }
+    }
+    if f.content-height > f.height: Rectangle {
+        x: parent.width - 3px;
+        width: 2px;
+        height: max(16px, f.height * f.height / f.content-height);
+        y: 1px + (- f.viewport-y) * (parent.height - 2px - self.height) / max(1px, f.content-height - f.height);
+        background: Theme.faint;
+    }
+}
+
+/// A choice list that opens below itself.
+export component Select inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index;
+    callback selected(string);
+
+    height: 28px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.muted : Theme.border;
+    border-radius: Theme.radius;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        Text {
+            text: root.model[root.current-index];
+            color: Theme.text;
+            font-family: Theme.mono;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: "▾";
+            color: Theme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { popup.show(); }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height;
+        width: root.width;
+        Rectangle {
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.accent;
+            VerticalLayout {
+                padding: 1px;
+                for option[i] in root.model: Rectangle {
+                    height: 26px;
+                    background: ota.has-hover ? Theme.surface-hover : i == root.current-index ? Theme.accent.transparentize(0.88) : transparent;
+                    Text {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: 100%;
+                        text: option;
+                        color: i == root.current-index ? Theme.accent : Theme.text;
+                        font-family: Theme.mono;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    ota := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.current-index = i;
+                            root.selected(option);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// [x] checkbox with a label.
+export component Check inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    callback toggled();
+    horizontal-stretch: 0;
+    min-height: 18px;
+
+    HorizontalLayout {
+        spacing: 7px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 13px;
+                height: 13px;
+                border-width: 1px;
+                border-color: root.checked ? Theme.accent : ta.has-hover ? Theme.text : Theme.muted;
+                background: root.checked ? Theme.accent : transparent;
+                Text {
+                    text: root.checked ? "✓" : "";
+                    color: Theme.bg;
+                    font-size: 10px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-family: Theme.mono;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+/// Vertical scrolling for a page, with a hairline position bar instead of
+/// Windows' scroll bar.
+export component Scroll inherits Rectangle {
+    f := Flickable {
+        width: 100%;
+        height: 100%;
+        content-height: max(self.height, content.preferred-height);
+        content := VerticalLayout {
+            width: f.width - 8px;
+            alignment: start;
+            @children
+        }
+    }
+    if f.content-height > f.height: Rectangle {
+        x: parent.width - 2px;
+        width: 2px;
+        height: max(20px, f.height * f.height / f.content-height);
+        y: (- f.viewport-y) * (parent.height - self.height) / max(1px, f.content-height - f.height);
+        background: Theme.faint;
     }
 }
 
@@ -201,7 +463,8 @@ export component Mole inherits Rectangle {
 }
 
 export component Hint inherits Text {
-    font-size: 11px;
+    font-family: Theme.mono;
+    font-size: 10px;
     color: Theme.muted;
     wrap: word-wrap;
 }

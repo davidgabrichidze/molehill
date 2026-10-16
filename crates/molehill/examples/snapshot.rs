@@ -67,7 +67,7 @@ fn main() {
     let ui = AppWindow::new().unwrap();
     ui.show().unwrap();
     let main_window = platform.windows.borrow()[0].clone();
-    let size = ((440.0 * SCALE) as u32, (660.0 * SCALE) as u32);
+    let size = ((380.0 * SCALE) as u32, (560.0 * SCALE) as u32);
 
     // List: one connected, one asking for credentials, one off.
     let mut on = item("a", "Acme Corp", "on", "Connected · 10.8.0.6");
@@ -181,6 +181,6 @@ fn main() {
         MenuTunnel { id: "c".into(), name: "Home lab".into(), state: "off".into() },
     ])));
     let h = menu.window().size().height.max(1);
-    let menu_size = ((272.0 * SCALE) as u32, h.max((300.0 * SCALE) as u32));
+    let menu_size = ((248.0 * SCALE) as u32, h.max((300.0 * SCALE) as u32));
     save(&menu_window, menu_size, &out.join("tray-menu.png"));
 }

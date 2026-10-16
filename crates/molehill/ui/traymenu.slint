@@ -26,7 +26,7 @@ component MenuRow inherits Rectangle {
     callback clicked();
 
     height: 30px;
-    border-radius: 3px;
+    border-radius: 0px;
     background: ta.has-hover && root.enabled ? (root.danger ? Theme.red.transparentize(0.85) : Theme.surface-hover) : transparent;
     opacity: root.enabled ? 1 : 0.4;
 
@@ -39,7 +39,7 @@ component MenuRow inherits Rectangle {
             Rectangle {
                 width: 7px;
                 height: 7px;
-                border-radius: 1px;
+                border-radius: 0px;
                 background: root.dot;
             }
         }
@@ -72,8 +72,9 @@ export component TrayMenu inherits Window {
     no-frame: true;
     always-on-top: true;
     background: Theme.bg;
-    width: 272px;
-    default-font-family: "Segoe UI Variable Text";
+    width: 248px;
+    default-font-family: Theme.mono;
+    default-font-size: 12px;
 
     in property <[MenuTunnel]> tunnels;
     in property <string> summary;
@@ -136,20 +137,20 @@ export component TrayMenu inherits Window {
                     trailing: t.state == "on" ? "on" : t.state == "busy" ? "…" : "off";
                     clicked => { root.toggle(t.id); }
                 }
-                if root.tunnels.length == 0: MenuRow { text: "No connections yet"; enabled: false; }
+                if root.tunnels.length == 0: MenuRow { text: "no connections yet"; enabled: false; }
 
                 Separator { }
 
-                MenuRow { text: "Open Molehill"; clicked => { root.open-app(); } }
+                MenuRow { text: "open molehill"; clicked => { root.open-app(); } }
                 MenuRow {
-                    text: "Disconnect all";
+                    text: "disconnect all";
                     enabled: root.any-on || root.any-busy;
                     clicked => { root.disconnect-all(); }
                 }
 
                 Separator { }
 
-                MenuRow { text: "Quit Molehill"; danger: true; clicked => { root.quit(); } }
+                MenuRow { text: "quit"; danger: true; clicked => { root.quit(); } }
             }
         }
     }

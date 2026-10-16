@@ -1,18 +1,23 @@
 import "fonts/JetBrainsMono-Regular.ttf";
 import "fonts/JetBrainsMono-Bold.ttf";
 
-// Tokyo Night (Omarchy's default) on a Windows 11 frame.
+// Tokyo Night, as in Omarchy: flat, square, monospace, hairline borders.
 export global Theme {
     out property <color> bg: #16161e;
-    out property <color> surface: #1f2335;
-    out property <color> surface-hover: #292e42;
-    out property <color> border: #2f334d;
+    // Inputs sit a step darker than the cards they're on.
+    out property <color> field: #13131a;
+    out property <color> surface: #1a1b26;
+    out property <color> surface-hover: #24283b;
+    out property <color> border: #292e42;
     out property <color> text: #c0caf5;
     out property <color> muted: #737aa2;
+    // Placeholders: clearly not typed text.
+    out property <color> placeholder: #444b6a;
     out property <color> faint: #3b4261;
     out property <color> accent: #7aa2f7;
     out property <color> green: #9ece6a;
     out property <color> yellow: #e0af68;
     out property <color> red: #f7768e;
     out property <string> mono: "JetBrains Mono";
+    out property <length> radius: 0px;
 }

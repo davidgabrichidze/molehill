@@ -171,7 +171,7 @@ pub fn claim_single_instance() -> bool {
 }
 
 /// The main window's fixed client size in logical pixels (see ui/app.slint).
-const LOGICAL_SIZE: (f64, f64) = (440.0, 660.0);
+const LOGICAL_SIZE: (f64, f64) = (380.0, 560.0);
 
 /// Sent to the main window by a second Molehill instance: show yourself.
 fn show_message() -> u32 {

@@ -1,6 +1,5 @@
-import { LineEdit, ScrollView, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Btn, LinkButton, Toggle, FieldLabel, Hint, Chip, Mole } from "widgets.slint";
+import { Btn, LinkButton, Toggle, FieldLabel, Hint, Chip, Mole, Input, TextArea, Scroll } from "widgets.slint";
 import { ConnectionItem, ConnectionCard, FormFieldItem } from "card.slint";
 import { TrayMenu, MenuTunnel } from "traymenu.slint";
 
@@ -24,36 +23,47 @@ component Header inherits HorizontalLayout {
     in property <string> title;
     in property <string> subtitle;
     callback back();
-    spacing: 10px;
-    LinkButton { text: "← back"; clicked => { root.back(); } }
+    spacing: 8px;
+    VerticalLayout {
+        alignment: center;
+        LinkButton { text: "←"; clicked => { root.back(); } }
+    }
     VerticalLayout {
         alignment: center;
         horizontal-stretch: 1;
         Text {
             text: root.title;
-            font-family: Theme.mono;
-            font-size: 15px;
+            font-size: 13px;
             font-weight: 700;
             color: Theme.text;
             overflow: elide;
         }
         if root.subtitle != "": Text {
             text: root.subtitle;
-            font-size: 12px;
+            font-size: 10px;
             color: Theme.muted;
             overflow: elide;
         }
     }
 }
 
+// A labelled block in the editor.
+component Field inherits VerticalLayout {
+    in property <string> label;
+    spacing: 5px;
+    FieldLabel { text: root.label; }
+    @children
+}
+
 export component AppWindow inherits Window {
     title: "Molehill";
     icon: root.app-icon;
     background: Theme.bg;
-    default-font-family: "Segoe UI Variable Text";
-    // Fixed size (close and minimize only); see platform.rs for why it matters.
-    width: 440px;
-    height: 660px;
+    default-font-family: Theme.mono;
+    default-font-size: 12px;
+    // Fixed size (close and minimize only); keep in sync with platform.rs.
+    width: 380px;
+    height: 560px;
 
     in property <image> app-icon;
     in-out property <Page> page: Page.list;
@@ -127,22 +137,22 @@ export component AppWindow inherits Window {
     in property <string> log-text;
 
     VerticalLayout {
-        padding: 16px;
-        padding-top: 12px;
-        spacing: 12px;
+        padding: 12px;
+        padding-top: 10px;
+        spacing: 10px;
 
         // ── list page ───────────────────────────────────────────────
         if root.page == Page.list: VerticalLayout {
-            spacing: 12px;
+            spacing: 10px;
 
             HorizontalLayout {
-                spacing: 12px;
-                padding-bottom: 4px;
+                spacing: 10px;
+                padding-bottom: 2px;
                 VerticalLayout {
                     alignment: center;
                     Mole {
-                        width: 40px;
-                        height: 20px;
+                        width: 32px;
+                        height: 16px;
                         tint: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.accent;
                     }
                 }
@@ -151,14 +161,13 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                     Text {
                         text: "molehill";
-                        font-family: Theme.mono;
-                        font-size: 18px;
+                        font-size: 15px;
                         font-weight: 700;
                         color: Theme.text;
                     }
                     Text {
                         text: root.summary;
-                        font-size: 12px;
+                        font-size: 10px;
                         color: root.any-on ? Theme.green : root.any-busy ? Theme.yellow : Theme.muted;
                         overflow: elide;
                     }
@@ -175,68 +184,63 @@ export component AppWindow inherits Window {
             }
 
             if root.notice != "": Rectangle {
-                border-radius: 4px;
-                background: Theme.yellow.transparentize(0.88);
+                background: Theme.yellow.transparentize(0.92);
                 border-width: 1px;
-                border-color: Theme.yellow.transparentize(0.6);
+                border-color: Theme.yellow.transparentize(0.55);
                 HorizontalLayout {
-                    padding: 10px;
-                    padding-left: 12px;
-                    spacing: 10px;
+                    padding: 8px;
+                    spacing: 8px;
                     Text {
                         text: root.notice;
                         color: Theme.yellow;
-                        font-size: 12px;
+                        font-size: 11px;
                         wrap: word-wrap;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
                     if root.components-attention: VerticalLayout {
                         alignment: center;
-                        Btn { text: "Open"; clicked => { root.open-components(); } }
+                        Btn { text: "open"; clicked => { root.open-components(); } }
                     }
                 }
             }
 
             if root.connections.length == 0: VerticalLayout {
                 alignment: center;
-                spacing: 14px;
+                spacing: 12px;
                 vertical-stretch: 1;
                 HorizontalLayout {
                     alignment: center;
                     Mole {
-                        width: 112px;
-                        height: 56px;
+                        width: 96px;
+                        height: 48px;
                         tint: Theme.faint;
                         eyes: Theme.muted;
                     }
                 }
                 Text {
-                    text: "No tunnels dug yet";
-                    font-family: Theme.mono;
-                    font-size: 15px;
+                    text: "no tunnels dug yet";
+                    font-size: 13px;
                     color: Theme.text;
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: "OpenVPN, Cisco AnyConnect, Fortinet and Palo Alto GlobalProtect.";
-                    font-size: 12px;
+                    text: "openvpn · cisco anyconnect · fortinet · globalprotect";
+                    font-size: 10px;
                     color: Theme.muted;
                     horizontal-alignment: center;
                     wrap: word-wrap;
                 }
                 HorizontalLayout {
                     alignment: center;
-                    Btn { text: "Add your first VPN"; kind: "primary"; clicked => { root.new-connection(); } }
+                    Btn { text: "add your first vpn"; kind: "primary"; clicked => { root.new-connection(); } }
                 }
             }
 
-            if root.connections.length > 0: ScrollView {
+            if root.connections.length > 0: Scroll {
                 vertical-stretch: 1;
                 VerticalLayout {
-                    alignment: start;
-                    spacing: 8px;
-                    padding-right: 4px;
+                    spacing: 6px;
                     for item in root.connections: ConnectionCard {
                         item: item;
                         locked: root.locked;
@@ -254,7 +258,7 @@ export component AppWindow inherits Window {
             }
 
             HorizontalLayout {
-                spacing: 4px;
+                spacing: 2px;
                 LinkButton { text: "+ new"; clicked => { root.new-connection(); } }
                 LinkButton { text: "components"; dot: root.components-attention; clicked => { root.open-components(); } }
                 Rectangle { horizontal-stretch: 1; }
@@ -262,8 +266,7 @@ export component AppWindow inherits Window {
                     alignment: center;
                     Text {
                         text: root.service-online ? "● service" : "○ service offline";
-                        font-family: Theme.mono;
-                        font-size: 11px;
+                        font-size: 10px;
                         color: root.service-online ? Theme.faint : Theme.red;
                     }
                 }
@@ -272,223 +275,205 @@ export component AppWindow inherits Window {
 
         // ── editor page ─────────────────────────────────────────────
         if root.page == Page.editor: VerticalLayout {
-            spacing: 12px;
+            spacing: 10px;
             Header {
                 title: root.form-is-new ? "new connection" : "edit connection";
                 back => { root.cancel-editor(); }
             }
 
-            ScrollView {
+            Scroll {
                 vertical-stretch: 1;
                 VerticalLayout {
-                    alignment: start;
-                    spacing: 14px;
-                    padding-right: 12px;
+                    spacing: 12px;
                     padding-bottom: 4px;
 
-                    VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Name"; }
-                        LineEdit { placeholder-text: "e.g. Work VPN"; text <=> root.form-name; }
+                    Field {
+                        label: "name";
+                        Input { placeholder: "e.g. work vpn"; text <=> root.form-name; }
                     }
 
-                    VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Protocol"; }
+                    Field {
+                        label: "protocol";
                         HorizontalLayout {
-                            spacing: 6px;
-                            Chip { text: "OpenVPN"; selected: root.form-protocol == 0; enabled: root.form-is-new; clicked => { root.form-protocol = 0; } }
-                            Chip { text: "Cisco"; selected: root.form-protocol == 1; enabled: root.form-is-new; clicked => { root.form-protocol = 1; root.form-error = ""; } }
-                            Chip { text: "Fortinet"; selected: root.form-protocol == 2; enabled: root.form-is-new; clicked => { root.form-protocol = 2; root.form-error = ""; } }
-                            Chip { text: "GlobalProtect"; selected: root.form-protocol == 3; enabled: root.form-is-new; clicked => { root.form-protocol = 3; root.form-error = ""; } }
+                            spacing: 4px;
+                            Chip { text: "openvpn"; selected: root.form-protocol == 0; enabled: root.form-is-new; clicked => { root.form-protocol = 0; } }
+                            Chip { text: "cisco"; selected: root.form-protocol == 1; enabled: root.form-is-new; clicked => { root.form-protocol = 1; root.form-error = ""; } }
+                            Chip { text: "fortinet"; selected: root.form-protocol == 2; enabled: root.form-is-new; clicked => { root.form-protocol = 2; root.form-error = ""; } }
+                            Chip { text: "paloalto"; selected: root.form-protocol == 3; enabled: root.form-is-new; clicked => { root.form-protocol = 3; root.form-error = ""; } }
                         }
                     }
 
-                    if root.form-protocol == 0: VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Set up from"; }
+                    if root.form-protocol == 0: Field {
+                        label: "set up from";
                         HorizontalLayout {
-                            spacing: 6px;
+                            spacing: 4px;
                             Chip { text: ".ovpn file"; selected: root.form-source == 0; clicked => { root.form-source = 0; root.form-error = ""; } }
-                            Chip { text: "Server"; note: "access server"; selected: root.form-source == 1; clicked => { root.form-source = 1; root.form-error = ""; } }
-                            Chip { text: "Manual"; selected: root.form-source == 2; clicked => { root.form-source = 2; root.form-error = ""; } }
+                            Chip { text: "server"; note: "access server"; selected: root.form-source == 1; clicked => { root.form-source = 1; root.form-error = ""; } }
+                            Chip { text: "manual"; selected: root.form-source == 2; clicked => { root.form-source = 2; root.form-error = ""; } }
                         }
                     }
 
                     // .ovpn file
-                    if root.form-protocol == 0 && root.form-source == 0: VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Profile (.ovpn)"; }
+                    if root.form-protocol == 0 && root.form-source == 0: Field {
+                        label: "profile (.ovpn)";
                         HorizontalLayout {
-                            spacing: 8px;
-                            LineEdit {
-                                placeholder-text: "The file your provider or IT gave you";
+                            spacing: 6px;
+                            Input {
+                                placeholder: "the file your provider or IT gave you";
                                 text: root.form-config;
                                 read-only: true;
                                 horizontal-stretch: 1;
                             }
-                            Btn { text: "Browse…"; clicked => { root.browse-config(); } }
+                            Btn { text: "browse"; clicked => { root.browse-config(); } }
                         }
                         if root.form-config-info != "": Hint { text: root.form-config-info; }
                     }
 
                     // OpenVPN Access Server
-                    if root.form-protocol == 0 && root.form-source == 1: VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Server address"; }
+                    if root.form-protocol == 0 && root.form-source == 1: Field {
+                        label: "server address";
                         HorizontalLayout {
-                            spacing: 8px;
-                            LineEdit {
-                                placeholder-text: "vpn.example.com";
+                            spacing: 6px;
+                            Input {
+                                placeholder: "vpn.example.com";
                                 text <=> root.form-server;
                                 horizontal-stretch: 1;
                             }
                             Btn {
-                                text: root.form-fetch-busy ? "Fetching…" : "Fetch profile";
+                                text: root.form-fetch-busy ? "fetching…" : "fetch";
                                 enabled: !root.form-fetch-busy;
                                 clicked => { root.fetch-profile(); }
                             }
                         }
                         Hint {
                             text: root.form-fetch-info != "" ? root.form-fetch-info
-                                : "Molehill signs in with the username and password below and downloads your profile, the same way OpenVPN Connect does.";
+                                : "Signs in with the username and password below and downloads your profile, like OpenVPN Connect.";
                         }
                         HorizontalLayout {
-                            spacing: 10px;
-                            padding-top: 4px;
+                            spacing: 8px;
+                            padding-top: 2px;
                             VerticalLayout {
                                 alignment: center;
                                 Toggle { checked: root.form-insecure; toggled => { root.form-insecure = !root.form-insecure; } }
                             }
                             Text {
-                                text: "Accept a self-signed web certificate";
+                                text: "accept a self-signed web certificate";
                                 color: Theme.text;
-                                font-size: 12px;
+                                font-size: 11px;
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
+                                wrap: word-wrap;
                             }
                         }
                     }
 
                     // Manual
                     if root.form-protocol == 0 && root.form-source == 2: VerticalLayout {
-                        spacing: 14px;
+                        spacing: 12px;
                         HorizontalLayout {
-                            spacing: 8px;
-                            VerticalLayout {
-                                spacing: 6px;
+                            spacing: 6px;
+                            Field {
+                                label: "server address";
                                 horizontal-stretch: 1;
-                                FieldLabel { text: "Server address"; }
-                                LineEdit { placeholder-text: "vpn.example.com"; text <=> root.form-host; }
+                                Input { placeholder: "vpn.example.com"; text <=> root.form-host; }
                             }
-                            VerticalLayout {
-                                spacing: 6px;
+                            Field {
+                                label: "port";
                                 horizontal-stretch: 0;
-                                FieldLabel { text: "Port"; }
-                                LineEdit { width: 88px; placeholder-text: "1194"; text <=> root.form-port; }
+                                Input { width: 72px; placeholder: "1194"; text <=> root.form-port; }
+                            }
+                        }
+                        Field {
+                            label: "transport";
+                            HorizontalLayout {
+                                spacing: 4px;
+                                Chip { text: "udp"; selected: !root.form-tcp; clicked => { root.form-tcp = false; } }
+                                Chip { text: "tcp"; selected: root.form-tcp; clicked => { root.form-tcp = true; } }
                             }
                         }
                         VerticalLayout {
-                            spacing: 6px;
-                            FieldLabel { text: "Transport"; }
+                            spacing: 5px;
                             HorizontalLayout {
-                                spacing: 6px;
-                                Chip { text: "UDP"; selected: !root.form-tcp; clicked => { root.form-tcp = false; } }
-                                Chip { text: "TCP"; selected: root.form-tcp; clicked => { root.form-tcp = true; } }
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: 6px;
-                            HorizontalLayout {
-                                FieldLabel { text: "CA certificate"; vertical-alignment: center; horizontal-stretch: 1; }
+                                FieldLabel { text: "ca certificate"; vertical-alignment: center; horizontal-stretch: 1; }
                                 LinkButton { text: "load file…"; clicked => { root.browse-ca(); } }
                             }
-                            TextEdit {
-                                height: 88px;
-                                font-size: 11px;
-                                placeholder-text: "-----BEGIN CERTIFICATE-----";
+                            TextArea {
+                                height: 76px;
+                                placeholder: "-----BEGIN CERTIFICATE-----";
                                 text <=> root.form-ca;
                             }
                         }
                         VerticalLayout {
-                            spacing: 6px;
+                            spacing: 5px;
                             HorizontalLayout {
-                                FieldLabel { text: "TLS key, if the server uses one"; vertical-alignment: center; horizontal-stretch: 1; }
+                                FieldLabel { text: "tls key, if the server uses one"; vertical-alignment: center; horizontal-stretch: 1; }
                                 if root.form-tls-mode != 0: LinkButton { text: "load file…"; clicked => { root.browse-tls-key(); } }
                             }
                             HorizontalLayout {
-                                spacing: 6px;
-                                Chip { text: "None"; selected: root.form-tls-mode == 0; clicked => { root.form-tls-mode = 0; } }
+                                spacing: 4px;
+                                Chip { text: "none"; selected: root.form-tls-mode == 0; clicked => { root.form-tls-mode = 0; } }
                                 Chip { text: "tls-auth"; selected: root.form-tls-mode == 1; clicked => { root.form-tls-mode = 1; } }
                                 Chip { text: "tls-crypt"; selected: root.form-tls-mode == 2; clicked => { root.form-tls-mode = 2; } }
                             }
-                            if root.form-tls-mode != 0: TextEdit {
-                                height: 88px;
-                                font-size: 11px;
-                                placeholder-text: "-----BEGIN OpenVPN Static key V1-----";
+                            if root.form-tls-mode != 0: TextArea {
+                                height: 76px;
+                                placeholder: "-----BEGIN OpenVPN Static key V1-----";
                                 text <=> root.form-tls-key;
                             }
                         }
-                        VerticalLayout {
-                            spacing: 6px;
-                            FieldLabel { text: "Extra directives (optional)"; }
-                            TextEdit {
-                                height: 64px;
-                                font-size: 11px;
-                                placeholder-text: "cipher AES-256-GCM";
+                        Field {
+                            label: "extra directives (optional)";
+                            TextArea {
+                                height: 56px;
+                                placeholder: "cipher AES-256-GCM";
                                 text <=> root.form-extra;
                             }
                         }
                     }
 
-                    if root.form-protocol != 0: VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Server address"; }
-                        LineEdit {
-                            placeholder-text: root.form-protocol == 2 ? "vpn.example.com or vpn.example.com:10443" : root.form-protocol == 3 ? "The portal, e.g. vpn.example.com" : "vpn.example.com or vpn.example.com/group";
+                    if root.form-protocol != 0: Field {
+                        label: "server address";
+                        Input {
+                            placeholder: root.form-protocol == 2 ? "vpn.example.com:10443" : root.form-protocol == 3 ? "the portal, e.g. vpn.example.com" : "vpn.example.com or vpn.example.com/group";
                             text <=> root.form-gateway;
                         }
-                        Hint { text: "The address your IT gave you, as you would type it in the official client."; }
+                        Hint { text: "As you would type it in the official client."; }
                     }
 
-                    if root.form-protocol != 0: VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: root.form-protocol == 2 ? "Realm (optional)" : root.form-protocol == 3 ? "Gateway (optional)" : "Group (optional)"; }
-                        LineEdit {
-                            placeholder-text: root.form-protocol == 2 ? "Only if your IT gave you one" : root.form-protocol == 3 ? "Picked for you from the portal's list" : "Picked for you from the server's list";
+                    if root.form-protocol != 0: Field {
+                        label: root.form-protocol == 2 ? "realm (optional)" : root.form-protocol == 3 ? "gateway (optional)" : "group (optional)";
+                        Input {
+                            placeholder: root.form-protocol == 2 ? "only if your IT gave you one" : "asked at sign-in, then remembered";
                             text <=> root.form-group;
                         }
                     }
 
-                    if root.form-protocol >= 2: VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "Sign in with"; }
+                    if root.form-protocol >= 2: Field {
+                        label: "sign in with";
                         HorizontalLayout {
-                            spacing: 6px;
-                            Chip { text: "Password"; selected: !root.form-sso; clicked => { root.form-sso = false; } }
-                            Chip { text: "Browser SSO"; selected: root.form-sso; clicked => { root.form-sso = true; } }
+                            spacing: 4px;
+                            Chip { text: "password"; selected: !root.form-sso; clicked => { root.form-sso = false; } }
+                            Chip { text: "browser sso"; selected: root.form-sso; clicked => { root.form-sso = true; } }
                         }
                         Hint {
                             text: root.form-sso
-                                ? (root.form-protocol == 3 ? "Your browser opens the company sign-in page (SAML), then hands the result back to Molehill." : "Your browser opens the company sign-in page (SAML).")
-                                : (root.form-protocol == 3 ? "Codes from SMS, email or a token app are asked for at sign-in." : "Codes from SMS, email or FortiToken are asked for at sign-in. Leave the code empty to get a FortiToken push.");
+                                ? "Your browser opens the company sign-in page (SAML)."
+                                : (root.form-protocol == 3 ? "Codes from SMS, email or a token app are asked for at sign-in." : "Codes from SMS, email or FortiToken are asked for at sign-in. Leave the code empty for a FortiToken push.");
                         }
                     }
 
                     if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {
-                        spacing: 8px;
-                        VerticalLayout {
-                            spacing: 6px;
+                        spacing: 6px;
+                        Field {
+                            label: "username";
                             horizontal-stretch: 1;
-                            FieldLabel { text: "Username"; }
-                            LineEdit { placeholder-text: "Optional"; text <=> root.form-username; }
+                            Input { placeholder: "optional"; text <=> root.form-username; }
                         }
-                        VerticalLayout {
-                            spacing: 6px;
+                        Field {
+                            label: "password";
                             horizontal-stretch: 1;
-                            FieldLabel { text: "Password"; }
-                            LineEdit {
-                                placeholder-text: root.form-has-saved-password ? "Saved. Leave empty to keep" : "Optional";
+                            Input {
+                                placeholder: root.form-has-saved-password ? "saved · empty keeps it" : "optional";
                                 input-type: password;
                                 text <=> root.form-password;
                             }
@@ -496,7 +481,7 @@ export component AppWindow inherits Window {
                     }
 
                     if !(root.form-protocol >= 2 && root.form-sso): HorizontalLayout {
-                        spacing: 10px;
+                        spacing: 8px;
                         VerticalLayout {
                             alignment: center;
                             Toggle { checked: root.form-remember; toggled => { root.form-remember = !root.form-remember; } }
@@ -504,27 +489,27 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             alignment: center;
                             horizontal-stretch: 1;
-                            Text { text: "Remember password"; color: Theme.text; font-size: 13px; }
-                            Hint { text: "Kept in Windows Credential Manager. Otherwise Molehill asks each time."; }
+                            Text { text: "remember password"; color: Theme.text; font-size: 11px; }
+                            Hint { text: "In Windows Credential Manager. Otherwise asked each time."; }
                         }
                     }
 
                     if root.form-error != "": Text {
                         text: root.form-error;
                         color: Theme.red;
-                        font-size: 12px;
+                        font-size: 11px;
                         wrap: word-wrap;
                     }
                 }
             }
 
             HorizontalLayout {
-                spacing: 8px;
-                if !root.form-is-new: Btn { text: "Delete"; kind: "danger"; clicked => { root.delete-profile(); } }
+                spacing: 6px;
+                if !root.form-is-new: Btn { text: "delete"; kind: "danger"; clicked => { root.delete-profile(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Btn { text: "Cancel"; clicked => { root.cancel-editor(); } }
+                Btn { text: "cancel"; clicked => { root.cancel-editor(); } }
                 Btn {
-                    text: root.form-fetch-busy ? "Fetching…" : "Save";
+                    text: root.form-fetch-busy ? "fetching…" : "save";
                     kind: "primary";
                     enabled: !root.form-fetch-busy;
                     clicked => { root.save-profile(); }
@@ -534,77 +519,78 @@ export component AppWindow inherits Window {
 
         // ── components page ─────────────────────────────────────────
         if root.page == Page.components: VerticalLayout {
-            spacing: 14px;
+            spacing: 10px;
             Header {
                 title: "components";
-                subtitle: "The engines Molehill drives. Installed and updated for you.";
+                subtitle: "the engines molehill drives, kept up to date";
                 back => { root.page = Page.list; }
             }
 
-            for c in root.components: Rectangle {
-                border-radius: 6px;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: c.action == "update" ? Theme.yellow.transparentize(0.5) : Theme.border;
+            Scroll {
+                vertical-stretch: 1;
                 VerticalLayout {
-                    padding: 12px;
-                    padding-left: 14px;
-                    spacing: 8px;
-                    HorizontalLayout {
-                        spacing: 12px;
+                    spacing: 6px;
+                    for c in root.components: Rectangle {
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: c.action == "update" ? Theme.yellow.transparentize(0.5) : Theme.border;
                         VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 2px;
-                            Text { text: c.name; font-size: 14px; font-weight: 600; color: Theme.text; }
-                            Text { text: c.description; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+                            padding: 10px;
+                            spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text { text: c.name; font-size: 12px; font-weight: 700; color: Theme.text; }
+                                    Text { text: c.description; font-size: 10px; color: Theme.muted; wrap: word-wrap; }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    if c.action == "install": Btn { text: c.busy ? "installing…" : "install"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
+                                    if c.action == "update": Btn { text: c.busy ? "updating…" : "update"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
+                                }
+                            }
+                            Text {
+                                text: c.version;
+                                font-size: 10px;
+                                color: c.action == "update" ? Theme.yellow : c.action == "install" ? Theme.red : Theme.green;
+                            }
+                            if c.message != "": Text {
+                                text: c.message;
+                                font-size: 10px;
+                                color: c.error ? Theme.red : Theme.muted;
+                                wrap: word-wrap;
+                            }
                         }
-                        VerticalLayout {
-                            alignment: center;
-                            if c.action == "install": Btn { text: c.busy ? "Installing…" : "Install"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
-                            if c.action == "update": Btn { text: c.busy ? "Updating…" : "Update"; kind: "primary"; enabled: !c.busy; clicked => { root.install-component(c.id); } }
-                        }
-                    }
-                    Text {
-                        text: c.version;
-                        font-family: Theme.mono;
-                        font-size: 11px;
-                        color: c.action == "update" ? Theme.yellow : c.action == "install" ? Theme.red : Theme.green;
-                    }
-                    if c.message != "": Text {
-                        text: c.message;
-                        font-size: 12px;
-                        color: c.error ? Theme.red : Theme.muted;
-                        wrap: word-wrap;
                     }
                 }
             }
 
             HorizontalLayout {
-                spacing: 8px;
+                spacing: 6px;
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
-                    Text { text: root.components-status; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+                    Text { text: root.components-status; font-size: 10px; color: Theme.muted; wrap: word-wrap; }
                 }
-                Btn { text: "Check for updates"; enabled: root.service-online; clicked => { root.check-updates(); } }
+                Btn { text: "check for updates"; enabled: root.service-online; clicked => { root.check-updates(); } }
             }
-
-            Rectangle { vertical-stretch: 1; }
         }
 
         // ── log page ────────────────────────────────────────────────
         if root.page == Page.log: VerticalLayout {
-            spacing: 12px;
+            spacing: 10px;
             Header {
                 title: root.log-title;
-                subtitle: "VPN engine output from this session";
+                subtitle: "vpn engine output from this session";
                 back => { root.page = Page.list; }
             }
-            TextEdit {
+            TextArea {
                 read-only: true;
+                wrap: false;
                 text: root.log-text;
-                font-size: 11px;
-                wrap: no-wrap;
+                font-size: 10px;
                 vertical-stretch: 1;
             }
         }

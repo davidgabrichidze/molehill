@@ -221,6 +221,9 @@ struct Ctx {
     /// at the first form.
     probing: bool,
     probed: bool,
+    /// Selects the user answered in this sign-in (by field name), so the form
+    /// the server sends back after a group change doesn't ask again.
+    picked: std::collections::HashSet<String>,
     /// The server sent a SAML form while in password mode.
     sso_needed: bool,
     last_error: Option<String>,
@@ -279,6 +282,10 @@ pub struct FieldInfo {
     pub kind: FieldKind,
     /// What the server put in already.
     pub current: String,
+    /// Select: how many choices, and whether the current one is settled (the
+    /// saved group, or picked by the user earlier in this sign-in).
+    pub choices: usize,
+    pub decided: bool,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -326,7 +333,12 @@ pub fn plan_form(
                     None => complete = false,
                 }
             }
-            FieldKind::Select => {}
+            // A real choice nobody made yet is the user's to make.
+            FieldKind::Select => {
+                if f.choices > 1 && !f.decided {
+                    complete = false;
+                }
+            }
         }
     }
     plan.auto_submit = !plan.fills.is_empty() && complete && !has_error && auto_submits < 5;
@@ -394,7 +406,17 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
                 OC_FORM_OPT_SELECT => FieldKind::Select,
                 _ => FieldKind::Password,
             };
-            FieldInfo { name: cstr(o.name).unwrap_or_default(), kind, current: cstr(o.value).unwrap_or_default() }
+            let name = cstr(o.name).unwrap_or_default();
+            let current = cstr(o.value).unwrap_or_default();
+            let (choices, decided) = if kind == FieldKind::Select {
+                let list = select_choices(op as *mut OcFormOptSelect);
+                let label = list.iter().find(|(n, _)| *n == current).map(|(_, l)| l.clone()).unwrap_or_default();
+                let saved = ctx.req.group.as_deref().is_some_and(|g| !current.is_empty() && (same(&current, g) || same(&label, g)));
+                (list.len(), saved || ctx.picked.contains(&name))
+            } else {
+                (0, false)
+            };
+            FieldInfo { name, kind, current, choices, decided }
         })
         .collect();
 
@@ -484,6 +506,9 @@ unsafe extern "C" fn on_form(privdata: *mut c_void, form: *mut OcAuthForm) -> c_
             for (i, &op) in opts.iter().enumerate() {
                 let name = &infos[i].name;
                 let Some((_, value)) = values.iter().find(|(n, _)| n == name) else { continue };
+                if infos[i].kind == FieldKind::Select {
+                    ctx.picked.insert(name.clone());
+                }
                 // An empty box must not wipe what Molehill filled in.
                 if value.is_empty() && filled.contains(&i) {
                     continue;
@@ -685,6 +710,7 @@ fn authenticate(req: AuthRequest, input: Input) -> (Result<Next>, Input) {
         cancelled: false,
         probing: false,
         probed: false,
+        picked: Default::default(),
         sso_needed: false,
         last_error: None,
     }));
@@ -768,7 +794,7 @@ mod tests {
     use super::*;
 
     fn f(name: &str, kind: FieldKind) -> FieldInfo {
-        FieldInfo { name: name.into(), kind, current: String::new() }
+        FieldInfo { name: name.into(), kind, current: String::new(), choices: 0, decided: false }
     }
 
     fn plan(fields: &[FieldInfo], error: bool, password_used: bool) -> FillPlan {
@@ -779,6 +805,19 @@ mod tests {
     fn fills_and_submits_a_plain_login() {
         let p = plan(&[f("group_list", FieldKind::Select), f("username", FieldKind::Text), f("password", FieldKind::Password)], false, false);
         assert!(p.auto_submit);
+        // …with a single group, or the saved one already selected.
+        let decided = FieldInfo { choices: 3, decided: true, ..f("group_list", FieldKind::Select) };
+        assert!(plan(&[decided, f("username", FieldKind::Text), f("password", FieldKind::Password)], false, false).auto_submit);
+    }
+
+    #[test]
+    fn asks_when_the_server_offers_a_real_choice() {
+        // Cisco's group list with no saved group: the user picks, even
+        // though username and password could be filled in.
+        let groups = FieldInfo { choices: 3, ..f("group_list", FieldKind::Select) };
+        let p = plan(&[groups, f("username", FieldKind::Text), f("password", FieldKind::Password)], false, false);
+        assert!(!p.auto_submit);
+        assert_eq!(p.fills.len(), 2, "still prefilled, so only the choice is left");
         assert_eq!(p.fills, vec![(1, "shota".into()), (2, "s3cret".into())]);
         assert_eq!(p.password_field.as_deref(), Some("password"));
     }

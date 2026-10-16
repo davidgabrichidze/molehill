@@ -530,13 +530,18 @@ impl App {
             let mut st = self.state.borrow_mut();
             let Some((_, model, fields)) = st.tunnels.get(id).and_then(|t| t.form.clone()) else { return };
             let mut values = Vec::new();
-            let (mut user, mut pass) = (None, None);
+            let (mut user, mut pass, mut group) = (None, None, None);
             for (i, f) in fields.iter().enumerate() {
                 let row = model.row_data(i).unwrap_or_default();
                 let value = match f.kind {
                     FieldKind::Select => f.options.get(row.selected.max(0) as usize).map(|o| o.0.clone()).unwrap_or_default(),
                     _ => row.value.to_string(),
                 };
+                // Cisco's group list, GlobalProtect's gateway: remembered as the
+                // profile's group so the next sign-in doesn't ask (editable there).
+                if f.kind == FieldKind::Select && matches!(f.name.as_str(), "group_list" | "authgroup" | "gateway") {
+                    group = Some(value.clone()).filter(|v| !v.is_empty());
+                }
                 if f.kind == FieldKind::Text && user.is_none() && looks_like_username(&f.name) {
                     user = Some(value.clone());
                 }
@@ -550,6 +555,9 @@ impl App {
             if let Some(p) = st.store.profiles.iter_mut().find(|p| p.id == id) {
                 if let Some(u) = user.filter(|u| !u.is_empty()) {
                     p.username = Some(u);
+                }
+                if group.is_some() {
+                    p.group = group;
                 }
                 if let Some(pw) = pass.filter(|_| p.remember_password) {
                     let _ = secrets::save_password(id, p.username.as_deref().unwrap_or(""), &pw);
